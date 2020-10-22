@@ -1,0 +1,31 @@
+[package]
+name = "qs-client"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+qs-common = { path = "../qs-common" }
+
+# Window and maths libraries
+image = "0.23"
+winit = "0.23"
+cgmath = "0.17"
+wgpu = "0.6"
+bytemuck = "1.4"
+
+# Multithreaded runtime
+tokio = { version = "0.3", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.21"
+tracing-subscriber = "0.2.13"
+futures = "0.3"
+
+# Design by contract assertions
+contracts = "0.6"
+
+[build-dependencies]
+# GLSL to SPIR-V shader compilation utilities
+shaderc = "0.6"
+anyhow = "1.0"
+fs_extra = "1.2"
+glob = "0.3"

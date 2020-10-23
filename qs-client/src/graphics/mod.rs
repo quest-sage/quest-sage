@@ -6,6 +6,8 @@ use winit::{
 
 mod batch;
 pub use batch::*;
+mod texture;
+pub use texture::*;
 
 /// This struct represents the state of the whole application and contains all of the `winit`
 /// and `wgpu` data for rendering things to the screen.
@@ -27,7 +29,7 @@ pub struct Application {
     /// A batch for rendering many shapes in a single draw call.
     batch: Batch,
     /// A debug texture for testing.
-    texture_view: wgpu::TextureView,
+    texture: Texture,
 }
 
 impl Application {
@@ -163,51 +165,7 @@ impl Application {
         let batch = Batch::new(&device, texture_bind_group_layout);
 
         // Now, let's initialise a texture for testing purposes.
-        let texture_image = image::load_from_memory(include_bytes!("../compiled_assets/test.png"))
-            .expect("Could not load test.png");
-        let texture_rgba = texture_image.to_rgba();
-        use image::GenericImageView;
-        let texture_dimensions = texture_image.dimensions();
-        let texture_size = wgpu::Extent3d {
-            width: texture_dimensions.0,
-            height: texture_dimensions.1,
-            depth: 1,
-        };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            // All textures are stored as 3D, we represent our 2D texture
-            // by setting depth to 1.
-            size: texture_size,
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // SAMPLED tells wgpu that we want to use this texture in shaders
-            // COPY_DST means that we want to copy data to this texture
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-            label: Some("diffuse_texture"),
-        });
-
-        // Send the RGBA data to our graphics card.
-        queue.write_texture(
-            // Tells `wgpu` where to copy the pixel data
-            wgpu::TextureCopyView {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            // The actual pixel data
-            &texture_rgba,
-            // The layout of the texture
-            wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: 4 * texture_dimensions.0,
-                rows_per_image: texture_dimensions.1,
-            },
-            texture_size,
-        );
-
-        // Define some metadata associated with the texture to let us use it in a rnder pass.
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let texture = Texture::from_bytes(&device, &queue, include_bytes!("../compiled_assets/test.png"), "test.png").unwrap();
 
         (Application {
             window,
@@ -223,7 +181,7 @@ impl Application {
             render_pipeline,
 
             batch,
-            texture_view,
+            texture,
         }, event_loop)
     }
 
@@ -273,31 +231,32 @@ impl Application {
         let renderables = iproduct!(-AMOUNT..AMOUNT, -AMOUNT..AMOUNT)
             .map(|(x, y)| (x as f32 * SIZE, y as f32 * SIZE))
             .map(|(x, y)| {
+                // `wgpu` stores texture coords with the origin in the top left, and the v axis pointing downwards.
                 Renderable::Quadrilateral(
                     Vertex {
                         position: [x + SIZE * -0.4, -0.4 * SIZE + y, 0.0],
                         color: [1.0, 0.0, 0.0],
-                        tex_coords: [0.0, 0.0],
+                        tex_coords: [0.0, 1.0],
                     },
                     Vertex {
                         position: [x + SIZE * 0.4, -0.4 * SIZE + y, 0.0],
                         color: [0.0, 1.0, 0.0],
-                        tex_coords: [1.0, 0.0],
+                        tex_coords: [1.0, 1.0],
                     },
                     Vertex {
                         position: [x + SIZE * 0.4, 0.4 * SIZE + y, 0.0],
                         color: [0.0, 0.0, 1.0],
-                        tex_coords: [1.0, 1.0],
+                        tex_coords: [1.0, 0.0],
                     },
                     Vertex {
                         position: [x + SIZE * -0.4, 0.4 * SIZE + y, 0.0],
                         color: [1.0, 0.0, 1.0],
-                        tex_coords: [0.0, 1.0],
+                        tex_coords: [0.0, 0.0],
                     },
                 )
             });
 
-        self.batch.render(&self.device, &self.queue, &frame, &self.render_pipeline, &self.texture_view, renderables);
+        self.batch.render(&self.device, &self.queue, &frame, &self.render_pipeline, &self.texture, renderables);
     }
 
     /// Executes the application.

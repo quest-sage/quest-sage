@@ -1,4 +1,5 @@
 use wgpu::*;
+use crate::graphics::Texture;
 
 /// The maximum anout of vertices that may be drawn in a single batched draw call.
 /// This must be smaller than the max value of a `u16` (65535) because the index
@@ -105,8 +106,7 @@ impl Batch {
         encoder: &mut CommandEncoder,
 
         render_pipeline: &RenderPipeline,
-        texture: &TextureView,
-        sampler: &Sampler,
+        texture: &Texture,
 
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
@@ -122,11 +122,11 @@ impl Batch {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(texture),
+                        resource: wgpu::BindingResource::TextureView(&texture.view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
+                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
                     },
                 ],
                 label: Some("texture_bind_group"),
@@ -183,8 +183,7 @@ impl Batch {
         encoder: &mut CommandEncoder,
 
         render_pipeline: &RenderPipeline,
-        texture: &TextureView,
-        sampler: &Sampler,
+        texture: &Texture,
 
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
@@ -193,7 +192,7 @@ impl Batch {
         new_inds: usize,
     ) {
         if verts.len() + new_verts > MAX_VERTEX_COUNT || inds.len() + new_inds > MAX_INDEX_COUNT {
-            self.flush(device, queue, frame, encoder, render_pipeline, texture, sampler, verts, inds);
+            self.flush(device, queue, frame, encoder, render_pipeline, texture, verts, inds);
         }
     }
 
@@ -204,24 +203,12 @@ impl Batch {
         frame: &SwapChainTexture,
 
         render_pipeline: &RenderPipeline,
-        texture: &TextureView,
+        texture: &Texture,
         items: impl Iterator<Item = Renderable>,
     ) {
         // Create a command encoder that records our render information to be sent to the GPU.
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("batch_render_encoder"),
-        });
-
-        // Tells `wgpu` how we want the texture to behave when we zoom in or out, or when the provided texture coordinates
-        // exceed the bounds of the texture itself.
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
         });
 
         // Store the vertices and indices so that we can write them to the vertex buffer and index buffer in a single function call.
@@ -232,7 +219,7 @@ impl Batch {
             match renderable {
                 Renderable::Empty => {}
                 Renderable::Triangle(v0, v1, v2) => {
-                    self.ensure_capacity(device, queue, frame, &mut encoder, render_pipeline, texture, &sampler, &mut verts, &mut inds, 3, 3);
+                    self.ensure_capacity(device, queue, frame, &mut encoder, render_pipeline, texture, &mut verts, &mut inds, 3, 3);
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -242,7 +229,7 @@ impl Batch {
                     inds.push(i0 + 2);
                 }
                 Renderable::Quadrilateral(v0, v1, v2, v3) => {
-                    self.ensure_capacity(device, queue, frame, &mut encoder, render_pipeline, texture, &sampler, &mut verts, &mut inds, 4, 6);
+                    self.ensure_capacity(device, queue, frame, &mut encoder, render_pipeline, texture, &mut verts, &mut inds, 4, 6);
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -258,6 +245,6 @@ impl Batch {
             }
         }
 
-        self.flush(device, queue, frame, &mut encoder, render_pipeline, texture, &sampler, &mut verts, &mut inds);
+        self.flush(device, queue, frame, &mut encoder, render_pipeline, texture, &mut verts, &mut inds);
     }
 }

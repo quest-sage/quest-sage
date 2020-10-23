@@ -18,13 +18,7 @@ jobs:
     - uses: actions/checkout@v2
     
     - name: Install Cap'n Proto
-      run: |
-        curl -O https://capnproto.org/capnproto-c++-0.8.0.tar.gz
-        tar zxf capnproto-c++-0.8.0.tar.gz
-        cd capnproto-c++-0.8.0
-        ./configure
-        make -j6 check
-        sudo make install
+      run: sudo apt-get install capnproto
     
     - name: Build
       run: cargo build --verbose

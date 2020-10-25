@@ -1,35 +1,40 @@
+use std::sync::Arc;
+use wgpu::*;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 
+use crate::assets::TextureAssetLoader;
+use qs_common::assets::{AssetManager, AssetPath};
+
 mod batch;
 pub use batch::*;
 mod texture;
-pub use texture::*;
+pub use texture::Texture;
+pub use texture::*; // want to use our texture over the wgpu texture
 
 /// This struct represents the state of the whole application and contains all of the `winit`
 /// and `wgpu` data for rendering things to the screen.
 pub struct Application {
     window: Window,
 
-    surface: wgpu::Surface,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    surface: Surface,
+    device: Arc<Device>,
+    queue: Arc<Queue>,
 
     /// The dimensions of the window's area we can render to.
     size: winit::dpi::PhysicalSize<u32>,
 
     /// Provides a way for us to recreate the swap chain when we (for example) resize the window.
-    swap_chain_descriptor: wgpu::SwapChainDescriptor,
-    swap_chain: wgpu::SwapChain,
-    render_pipeline: wgpu::RenderPipeline,
+    swap_chain_descriptor: SwapChainDescriptor,
+    swap_chain: SwapChain,
+    render_pipeline: RenderPipeline,
 
     /// A batch for rendering many shapes in a single draw call.
     batch: Batch,
-    /// A debug texture for testing.
-    texture: Texture,
+    texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
 }
 
 impl Application {
@@ -53,11 +58,11 @@ impl Application {
         // These three variables essentially encapsulate various handles to the graphics card
         // and specifically the window we're working with.
         // Using BackendBit::PRIMARY we request the Vulkan + Metal + DX12 backends.
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+        let instance = Instance::new(BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
+            .request_adapter(&RequestAdapterOptions {
+                power_preference: PowerPreference::Default,
                 compatible_surface: Some(&surface),
             })
             .await
@@ -67,93 +72,94 @@ impl Application {
         // send commands to the device, which are executed asynchronously.
         let (device, queue) = adapter
             .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                &DeviceDescriptor {
+                    features: Features::empty(),
+                    limits: Limits::default(),
                     shader_validation: true,
                 },
                 None,
             )
             .await
             .unwrap();
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
 
         // The swap chain represents the images that will be presented to the `surface` above.
         // When we resize the window, we need to recreate the swap chain because the images
         // to be presented are now a different size.
-        let swap_chain_descriptor = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        let swap_chain_descriptor = SwapChainDescriptor {
+            usage: TextureUsage::OUTPUT_ATTACHMENT,
+            format: TextureFormat::Bgra8UnormSrgb,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Immediate,
+            present_mode: PresentMode::Immediate,
         };
         let swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
 
         // Define how we want to bind textures in our render pipeline.
         let texture_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
-                        multisampled: false,
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Uint,
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStage::FRAGMENT,
+                        ty: BindingType::SampledTexture {
+                            multisampled: false,
+                            dimension: TextureViewDimension::D2,
+                            component_type: TextureComponentType::Uint,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                    count: None,
-                },
-            ],
-            label: Some("texture_bind_group_layout"),
-        });
-
-        // Now we'll define some shaders and the render pipeline.
-        let vs_module =
-            device.create_shader_module(wgpu::include_spirv!("../compiled_assets/shaders/shader.vert.spv"));
-        let fs_module =
-            device.create_shader_module(wgpu::include_spirv!("../compiled_assets/shaders/shader.frag.spv"));
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
-                push_constant_ranges: &[],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStage::FRAGMENT,
+                        ty: BindingType::Sampler { comparison: false },
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        // Now we'll define some shaders and the render pipeline.
+        let vs_module = device
+            .create_shader_module(include_spirv!("../compiled_assets/shaders/shader.vert.spv"));
+        let fs_module = device
+            .create_shader_module(include_spirv!("../compiled_assets/shaders/shader.frag.spv"));
+        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&texture_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex_stage: ProgrammableStageDescriptor {
                 module: &vs_module,
                 entry_point: "main",
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment_stage: Some(ProgrammableStageDescriptor {
                 module: &fs_module,
                 entry_point: "main",
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::Back,
+            rasterization_state: Some(RasterizationStateDescriptor {
+                front_face: FrontFace::Ccw,
+                cull_mode: CullMode::Back,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
                 clamp_depth: false,
             }),
-            color_states: &[wgpu::ColorStateDescriptor {
+            color_states: &[ColorStateDescriptor {
                 format: swap_chain_descriptor.format,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
+                color_blend: BlendDescriptor::REPLACE,
+                alpha_blend: BlendDescriptor::REPLACE,
+                write_mask: ColorWrite::ALL,
             }],
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive_topology: PrimitiveTopology::TriangleList,
             depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
+            vertex_state: VertexStateDescriptor {
+                index_format: IndexFormat::Uint16,
                 vertex_buffers: &[Vertex::get_buffer_descriptor()],
             },
             sample_count: 1,
@@ -164,25 +170,30 @@ impl Application {
         // Let's create a batch to render many shapes in a single render pass.
         let batch = Batch::new(&device, texture_bind_group_layout);
 
-        // Now, let's initialise a texture for testing purposes.
-        let texture = Texture::from_bytes(&device, &queue, include_bytes!("../compiled_assets/test.png"), "test.png").unwrap();
+        let texture_am = AssetManager::new(TextureAssetLoader::new(
+            Arc::clone(&device),
+            Arc::clone(&queue),
+        ));
 
-        (Application {
-            window,
+        (
+            Application {
+                window,
 
-            surface,
-            device,
-            queue,
+                surface,
+                device,
+                queue,
 
-            size,
+                size,
 
-            swap_chain_descriptor,
-            swap_chain,
-            render_pipeline,
+                swap_chain_descriptor,
+                swap_chain,
+                render_pipeline,
 
-            batch,
-            texture,
-        }, event_loop)
+                batch,
+                texture_am,
+            },
+            event_loop,
+        )
     }
 
     /// # Arguments
@@ -192,7 +203,9 @@ impl Application {
         self.size = new_size;
         self.swap_chain_descriptor.width = new_size.width;
         self.swap_chain_descriptor.height = new_size.height;
-        self.swap_chain = self.device.create_swap_chain(&self.surface, &self.swap_chain_descriptor);
+        self.swap_chain = self
+            .device
+            .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
     }
 
     /// Renders a single frame, submitting it to the swap chain.
@@ -205,15 +218,17 @@ impl Application {
             .output;
 
         // Clear the screen with a default colour.
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Clear Colour Encoder")
-        });
-        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("Clear Colour Encoder"),
+            });
+        let render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            color_attachments: &[RenderPassColorAttachmentDescriptor {
                 attachment: &frame.view,
                 resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                ops: Operations {
+                    load: LoadOp::Load,
                     store: true,
                 },
             }],
@@ -256,43 +271,54 @@ impl Application {
                 )
             });
 
-        self.batch.render(&self.device, &self.queue, &frame, &self.render_pipeline, &self.texture, renderables);
+        self.batch.render(
+            &self.device,
+            &self.queue,
+            &frame,
+            &self.render_pipeline,
+            self.texture_am
+                .get(AssetPath::new(vec!["test.png".to_string()])),
+            renderables,
+        );
     }
 
     /// Executes the application.
     pub async fn run(mut self, event_loop: EventLoop<()>) {
         event_loop.run(move |event, _, control_flow| {
             match event {
-                Event::WindowEvent { event, window_id } if window_id == self.window.id() => match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                Event::WindowEvent { event, window_id } if window_id == self.window.id() => {
+                    match event {
+                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
 
-                    WindowEvent::KeyboardInput { input, .. } => match input {
-                        KeyboardInput {
-                            state: ElementState::Pressed,
-                            virtual_keycode: Some(VirtualKeyCode::Escape),
-                            ..
-                        } => *control_flow = ControlFlow::Exit,
+                        WindowEvent::KeyboardInput { input, .. } => match input {
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Escape),
+                                ..
+                            } => *control_flow = ControlFlow::Exit,
+                            _ => {}
+                        },
+
+                        WindowEvent::Resized(new_size) => self.resize(new_size, None),
+                        WindowEvent::ScaleFactorChanged {
+                            new_inner_size,
+                            scale_factor,
+                        } => self.resize(*new_inner_size, Some(scale_factor)),
+
                         _ => {}
-                    },
-
-                    WindowEvent::Resized(new_size) => self.resize(new_size, None),
-                    WindowEvent::ScaleFactorChanged { new_inner_size, scale_factor } => {
-                        self.resize(*new_inner_size, Some(scale_factor))
                     }
-
-                    _ => {}
                 }
-    
+
                 Event::RedrawRequested(window_id) if window_id == self.window.id() => {
                     self.render();
                 }
-    
+
                 Event::MainEventsCleared => {
                     // RedrawRequested will only trigger once, unless we manually
                     // request it.
                     self.window.request_redraw();
                 }
-    
+
                 _ => {}
             }
         });

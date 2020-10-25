@@ -1,4 +1,6 @@
+use qs_common::assets::Asset;
 use wgpu::*;
+use qs_common::assets::LoadStatus;
 use crate::graphics::Texture;
 
 /// The maximum anout of vertices that may be drawn in a single batched draw call.
@@ -106,7 +108,7 @@ impl Batch {
         encoder: &mut CommandEncoder,
 
         render_pipeline: &RenderPipeline,
-        texture: &Texture,
+        texture: &Asset<Texture>,
 
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
@@ -116,54 +118,63 @@ impl Batch {
                 inds.push(0); // dummy value to align the slice to a size that is a multiple of 4 bytes
             }
 
-            // Describe how we want to send the texture to the GPU.
-            let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &self.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                    },
-                ],
-                label: Some("texture_bind_group"),
-            });
-    
-            // Begin recording a render pass. When we drop this struct, `wgpu` will finish recording.
-            // This allows us to send this recorded list of commands to the GPU.
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &frame.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-            render_pass.set_pipeline(render_pipeline);
-    
-            render_pass.set_bind_group(0, &texture_bind_group, &[]);
-    
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..));
+            let mut render = |texture: &Texture| {
+                // Describe how we want to send the texture to the GPU.
+                let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &self.texture_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&texture.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                        },
+                    ],
+                    label: Some("texture_bind_group"),
+                });
+        
+                // Begin recording a render pass. When we drop this struct, `wgpu` will finish recording.
+                // This allows us to send this recorded list of commands to the GPU.
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                        attachment: &frame.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: true,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                });
+                render_pass.set_pipeline(render_pipeline);
+        
+                render_pass.set_bind_group(0, &texture_bind_group, &[]);
+        
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.index_buffer.slice(..));
 
-            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&inds));
+                queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+                queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&inds));
 
-            render_pass.draw_indexed(0..inds.len() as u32, 0, 0..1);
+                render_pass.draw_indexed(0..inds.len() as u32, 0, 0..1);
 
-            drop(render_pass);
-            let old_encoder = std::mem::replace(encoder, device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Render Encoder"),
-                })
-            );
-            queue.submit(std::iter::once(old_encoder.finish()));
+                drop(render_pass);
+                let old_encoder = std::mem::replace(encoder, device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Render Encoder"),
+                    })
+                );
+                queue.submit(std::iter::once(old_encoder.finish()));
+            };
+
+            // TODO make a default texture for unloaded textures.
+            if let Some(asset) = texture.data.upgrade() {
+                if let LoadStatus::Loaded(tex) = &*asset.read().unwrap() {
+                    render(tex);
+                }
+            }
         }
 
         verts.clear();
@@ -183,7 +194,7 @@ impl Batch {
         encoder: &mut CommandEncoder,
 
         render_pipeline: &RenderPipeline,
-        texture: &Texture,
+        texture: &Asset<Texture>,
 
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
@@ -203,7 +214,7 @@ impl Batch {
         frame: &SwapChainTexture,
 
         render_pipeline: &RenderPipeline,
-        texture: &Texture,
+        texture: &Asset<Texture>,
         items: impl Iterator<Item = Renderable>,
     ) {
         // Create a command encoder that records our render information to be sent to the GPU.

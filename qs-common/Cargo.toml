@@ -5,3 +5,12 @@ authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+# Multithreaded runtime
+tokio = { version = "0.3", features = ["rt-multi-thread", "macros", "io-util", "fs"] }
+tracing = "0.1.21"
+
+# Asynchronous traits and trait impls
+async-trait = "0.1.41"
+
+lazy_static = "1.4"
+find_folder = "0.3"

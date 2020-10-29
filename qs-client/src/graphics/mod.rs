@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Instant, Duration};
 use wgpu::*;
 use winit::{
     event::*,
@@ -17,6 +18,59 @@ pub use texture::*; // want to use our texture over the wgpu texture
 mod camera;
 pub use camera::*;
 
+/// An interpolated stopwatch counts the time between successive events, and calculates the average
+/// time between those events, by storing the times of the last `n` events, where `n` is some arbitrary
+/// constant specified in the stopwatch constructor.
+pub struct InterpolatedStopwatch {
+    times: Vec<Instant>,
+    offset: usize,
+    pub ticks: u64,
+}
+
+impl InterpolatedStopwatch {
+    pub fn new(interpolation_amount: usize) -> InterpolatedStopwatch {
+        let mut vec = Vec::with_capacity(interpolation_amount);
+        let now = Instant::now();
+        for _ in 0..interpolation_amount {
+            vec.push(now);
+        }
+        InterpolatedStopwatch {
+            times: vec,
+            offset: 0,
+            ticks: 0,
+        }
+    }
+
+    /// Call this function every time the given event happens.
+    /// You will be able to retrieve the average time between calls to `tick`
+    /// using the `average_time` function.
+    ///
+    /// Returns the time between the previous tick and this tick.
+    pub fn tick(&mut self) -> Duration {
+        let prev_offset = match self.offset {
+            0 => self.times.len() - 1,
+            _ => self.offset - 1,
+        };
+
+        self.times[self.offset] = Instant::now();
+        let old_time = self.times[prev_offset];
+        let time = self.times[self.offset].duration_since(old_time);
+        self.offset = (self.offset + 1) % self.times.len();
+        self.ticks += 1;
+        time
+    }
+
+    pub fn average_time(&self) -> Duration {
+        let prev_offset = match self.offset {
+            0 => self.times.len() - 1,
+            _ => self.offset - 1,
+        };
+        self.times[prev_offset]
+            .duration_since(self.times[self.offset])
+            .div_f64(self.times.len() as f64)
+    }
+}
+
 /// This struct represents the state of the whole application and contains all of the `winit`
 /// and `wgpu` data for rendering things to the screen.
 pub struct Application {
@@ -33,6 +87,9 @@ pub struct Application {
     swap_chain_descriptor: SwapChainDescriptor,
     swap_chain: SwapChain,
     render_pipeline: RenderPipeline,
+
+    last_frame_time: Instant,
+    fps_counter: InterpolatedStopwatch,
 
     camera: Camera,
     /// A batch for rendering many shapes in a single draw call.
@@ -214,6 +271,9 @@ impl Application {
                 swap_chain,
                 render_pipeline,
 
+                last_frame_time: Instant::now(),
+                fps_counter: InterpolatedStopwatch::new(100),
+
                 camera,
                 batch,
                 texture_am,
@@ -236,8 +296,19 @@ impl Application {
 
     /// Renders a single frame, submitting it to the swap chain.
     pub fn render(&mut self) {
-        if let CameraData::Orthographic { ref mut eye, .. } = self.camera.get_data_mut() {
-            eye.x += 0.001;
+        let this_frame_time = Instant::now();
+        let delta_duration = this_frame_time - self.last_frame_time;
+        self.last_frame_time = this_frame_time;
+        let delta_seconds = delta_duration.as_secs_f32();
+        self.fps_counter.tick();
+
+        if self.fps_counter.ticks % 100 == 0 {
+            tracing::trace!("{:.2} FPS", 1.0 / self.fps_counter.average_time().as_secs_f64());
+        }
+
+        {
+            let CameraData::Orthographic { ref mut eye, .. } = self.camera.get_data_mut();
+            eye.x += 0.5 * delta_seconds;
         }
 
         // Get a handle to a texture that we can render the next frame to.

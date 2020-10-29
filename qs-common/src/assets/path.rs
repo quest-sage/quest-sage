@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use tokio::io::BufReader;
 use tokio::fs::File;
+use tokio::io::BufReader;
 
 /// Represents the path to an asset on disk, stored relative to the `assets` directory.
 #[derive(Eq, PartialEq, Clone, Hash)]
@@ -10,7 +10,9 @@ pub struct AssetPath {
 
 use lazy_static::lazy_static;
 lazy_static! {
-    static ref ASSET_FOLDER: PathBuf = find_folder::Search::Kids(3).for_folder("assets").expect("Could not find asset dir");
+    static ref ASSET_FOLDER: PathBuf = find_folder::Search::Kids(3)
+        .for_folder("assets")
+        .expect("Could not find asset dir");
 }
 
 impl AssetPath {

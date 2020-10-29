@@ -14,6 +14,8 @@ pub use batch::*;
 mod texture;
 pub use texture::Texture;
 pub use texture::*; // want to use our texture over the wgpu texture
+mod camera;
+pub use camera::*;
 
 /// This struct represents the state of the whole application and contains all of the `winit`
 /// and `wgpu` data for rendering things to the screen.
@@ -32,6 +34,7 @@ pub struct Application {
     swap_chain: SwapChain,
     render_pipeline: RenderPipeline,
 
+    camera: Camera,
     /// A batch for rendering many shapes in a single draw call.
     batch: Batch,
     texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
@@ -119,15 +122,27 @@ impl Application {
                 ],
                 label: Some("texture_bind_group_layout"),
             });
+        // Define how we want to bind uniforms.
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("uniform_bind_group_layout"),
+            });
 
         // Now we'll define some shaders and the render pipeline.
-        let vs_module = device
-            .create_shader_module(include_spirv!("../compiled_assets/shaders/shader.vert.spv"));
-        let fs_module = device
-            .create_shader_module(include_spirv!("../compiled_assets/shaders/shader.frag.spv"));
+        let vs_module = device.create_shader_module(include_spirv!("shader.vert.spv"));
+        let fs_module = device.create_shader_module(include_spirv!("shader.frag.spv"));
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&texture_bind_group_layout],
+            bind_group_layouts: &[&texture_bind_group_layout, &uniform_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -167,8 +182,18 @@ impl Application {
             alpha_to_coverage_enabled: false,
         });
 
+        let camera = Camera::new(CameraData::Orthographic {
+            eye: cgmath::Point2::new(0.0, 0.0),
+            view_height: 3.0,
+            aspect_ratio: 1.0,
+        });
+
         // Let's create a batch to render many shapes in a single render pass.
-        let batch = Batch::new(&device, texture_bind_group_layout);
+        let batch = Batch::new(
+            &device,
+            texture_bind_group_layout,
+            uniform_bind_group_layout,
+        );
 
         let texture_am = AssetManager::new(TextureAssetLoader::new(
             Arc::clone(&device),
@@ -189,6 +214,7 @@ impl Application {
                 swap_chain,
                 render_pipeline,
 
+                camera,
                 batch,
                 texture_am,
             },
@@ -210,6 +236,10 @@ impl Application {
 
     /// Renders a single frame, submitting it to the swap chain.
     pub fn render(&mut self) {
+        if let CameraData::Orthographic { ref mut eye, .. } = self.camera.get_data_mut() {
+            eye.x += 0.001;
+        }
+
         // Get a handle to a texture that we can render the next frame to.
         let frame = self
             .swap_chain
@@ -278,6 +308,7 @@ impl Application {
             &self.render_pipeline,
             self.texture_am
                 .get(AssetPath::new(vec!["test.png".to_string()])),
+            &self.camera,
             renderables,
         );
     }

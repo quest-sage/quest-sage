@@ -114,6 +114,7 @@ impl Application {
 
         // The amount of pixels we have to work with in our window.
         let size = window.inner_size();
+        let scale_factor = window.scale_factor();
 
         // These three variables essentially encapsulate various handles to the graphics card
         // and specifically the window we're working with.
@@ -257,27 +258,32 @@ impl Application {
             Arc::clone(&queue),
         ));
 
+        let mut app = Application {
+            window,
+
+            surface,
+            device,
+            queue,
+
+            size,
+
+            swap_chain_descriptor,
+            swap_chain,
+            render_pipeline,
+
+            last_frame_time: Instant::now(),
+            fps_counter: InterpolatedStopwatch::new(100),
+
+            camera,
+            batch,
+            texture_am,
+        };
+
+        // Call resize at the start so that we initialise cameras etc with the correct aspect ratio.
+        app.resize(size, Some(scale_factor));
+
         (
-            Application {
-                window,
-
-                surface,
-                device,
-                queue,
-
-                size,
-
-                swap_chain_descriptor,
-                swap_chain,
-                render_pipeline,
-
-                last_frame_time: Instant::now(),
-                fps_counter: InterpolatedStopwatch::new(100),
-
-                camera,
-                batch,
-                texture_am,
-            },
+            app,
             event_loop,
         )
     }
@@ -292,6 +298,8 @@ impl Application {
         self.swap_chain = self
             .device
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
+
+        self.camera.update_window_size(new_size.width, new_size.height);
     }
 
     /// Renders a single frame, submitting it to the swap chain.
@@ -329,7 +337,12 @@ impl Application {
                 attachment: &frame.view,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Load,
+                    load: LoadOp::Clear(Color {
+                        r: 0.1,
+                        g: 0.1,
+                        b: 0.1,
+                        a: 1.0,
+                    }),
                     store: true,
                 },
             }],

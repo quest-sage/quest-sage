@@ -25,7 +25,7 @@ pub enum CameraData {
 
 impl CameraData {
     pub fn generate_projection_matrix(&self) -> Matrix4<f32> {
-        match &self {
+        match self {
             CameraData::Orthographic {
                 view_height,
                 aspect_ratio,
@@ -50,8 +50,16 @@ impl CameraData {
     }
 
     pub fn generate_view_matrix(&self) -> Matrix4<f32> {
-        match &self {
+        match self {
             CameraData::Orthographic { eye, .. } => Matrix4::from_translation(eye.to_vec().extend(0.0)),
+        }
+    }
+
+    pub fn update_window_size(&mut self, width: u32, height: u32) {
+        match self {
+            CameraData::Orthographic { aspect_ratio, .. } => {
+                *aspect_ratio = width as f32 / height as f32;
+            }
         }
     }
 }
@@ -108,5 +116,9 @@ impl Camera {
         self.projection_matrix.set(None);
         self.view_matrix.set(None);
         &mut self.data
+    }
+
+    pub fn update_window_size(&mut self, width: u32, height: u32) {
+        self.get_data_mut().update_window_size(width, height);
     }
 }

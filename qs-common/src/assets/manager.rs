@@ -42,6 +42,8 @@ where
         }
     }
 
+    /// Retrieves the asset with the given key. If the asset was not loaded, it will be
+    /// loaded on a background task without blocking the main thread.
     pub fn get(&mut self, k: K) -> &Asset<T> {
         let k1 = k.clone();
         let entry = self.assets.entry(k1);

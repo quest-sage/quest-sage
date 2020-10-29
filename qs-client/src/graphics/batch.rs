@@ -21,7 +21,7 @@ const MAX_INDEX_COUNT: usize = 81920;
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub color: [f32; 3],
+    pub color: [f32; 4],
     pub tex_coords: [f32; 2],
 }
 /// Tell `bytemuck` that we can treat any vertex as plain old data.
@@ -44,10 +44,10 @@ impl Vertex {
                 VertexAttributeDescriptor {
                     offset: std::mem::size_of::<[f32; 3]>() as BufferAddress,
                     shader_location: 1,
-                    format: VertexFormat::Float3,
+                    format: VertexFormat::Float4,
                 },
                 VertexAttributeDescriptor {
-                    offset: std::mem::size_of::<[f32; 6]>() as BufferAddress,
+                    offset: std::mem::size_of::<[f32; 7]>() as BufferAddress,
                     shader_location: 2,
                     format: VertexFormat::Float2,
                 },

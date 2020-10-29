@@ -37,14 +37,14 @@ impl ShaderData {
 }
 
 fn main() -> Result<()> {
-    // This tells cargo to rerun this script if something in /src/ changes.
-    println!("cargo:rerun-if-changed=src/compiled_assets/shaders/*");
+    // This tells cargo to rerun this script if something in /src/graphics changes.
+    println!("cargo:rerun-if-changed=src/graphics/*");
 
     // Collect all shaders recursively within /src/
     let mut shader_paths = [
-        glob("./src/**/*.vert")?,
-        glob("./src/**/*.frag")?,
-        glob("./src/**/*.comp")?,
+        glob("./src/graphics/**/*.vert")?,
+        glob("./src/graphics/**/*.frag")?,
+        glob("./src/graphics/**/*.comp")?,
     ];
 
     // This could be parallelized

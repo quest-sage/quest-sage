@@ -225,8 +225,18 @@ impl Application {
             }),
             color_states: &[ColorStateDescriptor {
                 format: swap_chain_descriptor.format,
-                color_blend: BlendDescriptor::REPLACE,
-                alpha_blend: BlendDescriptor::REPLACE,
+                color_blend: BlendDescriptor {
+                    src_factor: BlendFactor::SrcAlpha,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha_blend: BlendDescriptor {
+                    src_factor: BlendFactor::SrcAlpha,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+                //color_blend: BlendDescriptor::REPLACE,
+                //alpha_blend: BlendDescriptor::REPLACE,
                 write_mask: ColorWrite::ALL,
             }],
             primitive_topology: PrimitiveTopology::TriangleList,
@@ -242,7 +252,7 @@ impl Application {
 
         let camera = Camera::new(CameraData::Orthographic {
             eye: cgmath::Point2::new(0.0, 0.0),
-            view_height: 3.0,
+            view_height: 1.0,
             aspect_ratio: 1.0,
         });
 
@@ -315,8 +325,8 @@ impl Application {
         }
 
         {
-            let CameraData::Orthographic { ref mut eye, .. } = self.camera.get_data_mut();
-            eye.x += 0.5 * delta_seconds;
+            //let CameraData::Orthographic { ref mut eye, .. } = self.camera.get_data_mut();
+            //eye.x += 0.5 * delta_seconds;
         }
 
         // Get a handle to a texture that we can render the next frame to.
@@ -364,22 +374,22 @@ impl Application {
                 Renderable::Quadrilateral(
                     Vertex {
                         position: [x + SIZE * -0.4, -0.4 * SIZE + y, 0.0],
-                        color: [1.0, 0.0, 0.0],
+                        color: [1.0, 0.0, 0.0, 1.0],
                         tex_coords: [0.0, 1.0],
                     },
                     Vertex {
                         position: [x + SIZE * 0.4, -0.4 * SIZE + y, 0.0],
-                        color: [0.0, 1.0, 0.0],
+                        color: [0.0, 1.0, 0.0, 1.0],
                         tex_coords: [1.0, 1.0],
                     },
                     Vertex {
                         position: [x + SIZE * 0.4, 0.4 * SIZE + y, 0.0],
-                        color: [0.0, 0.0, 1.0],
+                        color: [0.0, 0.0, 1.0, 0.0],
                         tex_coords: [1.0, 0.0],
                     },
                     Vertex {
                         position: [x + SIZE * -0.4, 0.4 * SIZE + y, 0.0],
-                        color: [1.0, 0.0, 1.0],
+                        color: [1.0, 0.0, 1.0, 0.0],
                         tex_coords: [0.0, 0.0],
                     },
                 )

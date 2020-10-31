@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use cgmath::{prelude::*, ortho, Matrix4, Point2};
+use cgmath::{ortho, prelude::*, Matrix4, Point2};
 
 /// The Z axis is expected to be in range 0.0 to 1.0, not -1.0 to 1.0.
 /// Multiplying on the left by this matrix converts OpenGL style matrices into `wgpu` style matrices.
@@ -51,7 +51,9 @@ impl CameraData {
 
     pub fn generate_view_matrix(&self) -> Matrix4<f32> {
         match self {
-            CameraData::Orthographic { eye, .. } => Matrix4::from_translation(eye.to_vec().extend(0.0)),
+            CameraData::Orthographic { eye, .. } => {
+                Matrix4::from_translation(eye.to_vec().extend(0.0))
+            }
         }
     }
 

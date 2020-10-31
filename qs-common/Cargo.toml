@@ -12,5 +12,6 @@ tracing = "0.1.21"
 # Asynchronous traits and trait impls
 async-trait = "0.1.41"
 
+# Utilities
 lazy_static = "1.4"
 find_folder = "0.3"

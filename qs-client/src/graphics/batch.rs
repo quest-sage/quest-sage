@@ -59,7 +59,7 @@ impl Vertex {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 struct Uniforms {
-    combined: cgmath::Matrix4<f32>
+    combined: cgmath::Matrix4<f32>,
 }
 /// Tell `bytemuck` that we can treat the uniforms as plain old data.
 unsafe impl bytemuck::Pod for Uniforms {}
@@ -75,6 +75,7 @@ impl Uniforms {
 
 /// An item that can be rendered using a `Batch`.
 /// To render items using a batch, call the `render` method on the batch.
+#[derive(Debug)]
 pub enum Renderable {
     Empty,
     Triangle(Vertex, Vertex, Vertex),
@@ -84,6 +85,8 @@ pub enum Renderable {
 /// The `Batch` combines multiple render calls with the same uniform parameters (textures, camera matrix, etc.)
 /// into a single render pass.
 pub struct Batch {
+    render_pipeline: RenderPipeline,
+
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     uniform_buffer: Buffer,
@@ -95,7 +98,69 @@ pub struct Batch {
 impl Batch {
     /// Creates a new batch. Note that allocating enough room on the graphics card to store a batch is a relatively
     /// expensive operation - don't create a batch every frame or just for one object, for example.
-    pub fn new(device: &Device, texture_bind_group_layout: BindGroupLayout, uniform_bind_group_layout: BindGroupLayout) -> Batch {
+    pub fn new(
+        device: &Device,
+        vertex_source: ShaderModuleSource,
+        fragment_source: ShaderModuleSource,
+        texture_bind_group_layout: BindGroupLayout,
+        uniform_bind_group_layout: BindGroupLayout,
+        swap_chain_format: TextureFormat,
+    ) -> Batch {
+        let vs_module = device.create_shader_module(vertex_source);
+        let fs_module = device.create_shader_module(fragment_source);
+
+        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&texture_bind_group_layout, &uniform_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex_stage: ProgrammableStageDescriptor {
+                module: &vs_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(ProgrammableStageDescriptor {
+                module: &fs_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(RasterizationStateDescriptor {
+                front_face: FrontFace::Ccw,
+                cull_mode: CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+                clamp_depth: false,
+            }),
+            color_states: &[ColorStateDescriptor {
+                format: swap_chain_format,
+                color_blend: BlendDescriptor {
+                    src_factor: BlendFactor::SrcAlpha,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha_blend: BlendDescriptor {
+                    src_factor: BlendFactor::SrcAlpha,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+                //color_blend: BlendDescriptor::REPLACE,
+                //alpha_blend: BlendDescriptor::REPLACE,
+                write_mask: ColorWrite::ALL,
+            }],
+            primitive_topology: PrimitiveTopology::TriangleList,
+            depth_stencil_state: None,
+            vertex_state: VertexStateDescriptor {
+                index_format: IndexFormat::Uint16,
+                vertex_buffers: &[Vertex::get_buffer_descriptor()],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
         let vertex_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("batch_vbo"),
             size: MAX_VERTEX_COUNT as BufferAddress
@@ -119,6 +184,8 @@ impl Batch {
         });
 
         Batch {
+            render_pipeline,
+
             vertex_buffer,
             index_buffer,
             uniform_buffer,
@@ -137,7 +204,6 @@ impl Batch {
         frame: &SwapChainTexture,
         encoder: &mut CommandEncoder,
 
-        render_pipeline: &RenderPipeline,
         texture: &Asset<Texture>,
 
         verts: &mut Vec<Vertex>,
@@ -168,12 +234,10 @@ impl Batch {
                 // Describe how we want to send the uniforms to the GPU.
                 let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: &self.uniform_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::Buffer(self.uniform_buffer.slice(..))
-                        }
-                    ],
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(self.uniform_buffer.slice(..)),
+                    }],
                     label: Some("uniform_bind_group"),
                 });
 
@@ -190,7 +254,7 @@ impl Batch {
                     }],
                     depth_stencil_attachment: None,
                 });
-                render_pass.set_pipeline(render_pipeline);
+                render_pass.set_pipeline(&self.render_pipeline);
 
                 render_pass.set_bind_group(0, &texture_bind_group, &[]);
                 render_pass.set_bind_group(1, &uniform_bind_group, &[]);
@@ -237,7 +301,6 @@ impl Batch {
         frame: &SwapChainTexture,
         encoder: &mut CommandEncoder,
 
-        render_pipeline: &RenderPipeline,
         texture: &Asset<Texture>,
 
         verts: &mut Vec<Vertex>,
@@ -247,16 +310,7 @@ impl Batch {
         new_inds: usize,
     ) {
         if verts.len() + new_verts > MAX_VERTEX_COUNT || inds.len() + new_inds > MAX_INDEX_COUNT {
-            self.flush(
-                device,
-                queue,
-                frame,
-                encoder,
-                render_pipeline,
-                texture,
-                verts,
-                inds,
-            );
+            self.flush(device, queue, frame, encoder, texture, verts, inds);
         }
     }
 
@@ -266,7 +320,6 @@ impl Batch {
         queue: &Queue,
         frame: &SwapChainTexture,
 
-        render_pipeline: &RenderPipeline,
         texture: &Asset<Texture>,
         camera: &crate::graphics::Camera,
         items: impl Iterator<Item = Renderable>,
@@ -292,7 +345,6 @@ impl Batch {
                         queue,
                         frame,
                         &mut encoder,
-                        render_pipeline,
                         texture,
                         &mut verts,
                         &mut inds,
@@ -313,7 +365,6 @@ impl Batch {
                         queue,
                         frame,
                         &mut encoder,
-                        render_pipeline,
                         texture,
                         &mut verts,
                         &mut inds,
@@ -340,7 +391,6 @@ impl Batch {
             queue,
             frame,
             &mut encoder,
-            render_pipeline,
             texture,
             &mut verts,
             &mut inds,

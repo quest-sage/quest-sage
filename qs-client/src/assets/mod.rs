@@ -2,6 +2,7 @@
 
 use crate::graphics::Texture;
 use qs_common::assets::*;
+use rusttype::Font;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use wgpu::{Device, Queue};
@@ -31,6 +32,36 @@ impl Loader<AssetPath, Texture> for TextureAssetLoader {
                             Err(_) => Err(LoadError::InvalidData),
                         }
                     }
+                    Err(_) => Err(LoadError::FileNotReadable),
+                }
+            }
+            Err(_) => Err(LoadError::FileNotFound),
+        }
+    }
+}
+
+/// Loads fonts from a file.
+pub struct FontAssetLoader {}
+
+impl FontAssetLoader {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[async_trait::async_trait]
+impl Loader<AssetPath, Font<'static>> for FontAssetLoader {
+    /// The asset should be a `.ttf` file, not an `.otf` file. This increases
+    /// compatibility with the `rusttype` libary that we use to load fonts.
+    async fn load(&self, key: AssetPath) -> Result<Font<'static>, LoadError> {
+        match key.read_file().await {
+            Ok(mut reader) => {
+                let mut result = Vec::new();
+                match reader.read_to_end(&mut result).await {
+                    Ok(_) => match Font::try_from_vec(result) {
+                        Some(font) => Ok(font),
+                        None => Err(LoadError::InvalidData),
+                    },
                     Err(_) => Err(LoadError::FileNotReadable),
                 }
             }

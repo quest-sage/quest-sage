@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use wgpu::*;
 use winit::{
     event::*,
@@ -7,16 +7,19 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::assets::TextureAssetLoader;
+use crate::assets::{FontAssetLoader, TextureAssetLoader};
 use qs_common::assets::{AssetManager, AssetPath};
 
 mod batch;
 pub use batch::*;
 mod texture;
+// want to use our texture struct over the wgpu texture
 pub use texture::Texture;
-pub use texture::*; // want to use our texture over the wgpu texture
+pub use texture::*;
 mod camera;
 pub use camera::*;
+mod text;
+pub use text::*;
 
 /// An interpolated stopwatch counts the time between successive events, and calculates the average
 /// time between those events, by storing the times of the last `n` events, where `n` is some arbitrary
@@ -86,15 +89,18 @@ pub struct Application {
     /// Provides a way for us to recreate the swap chain when we (for example) resize the window.
     swap_chain_descriptor: SwapChainDescriptor,
     swap_chain: SwapChain,
-    render_pipeline: RenderPipeline,
 
     last_frame_time: Instant,
     fps_counter: InterpolatedStopwatch,
 
+    texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
+    font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
+
     camera: Camera,
+    ui_camera: Camera,
     /// A batch for rendering many shapes in a single draw call.
     batch: Batch,
-    texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
+    text_renderer: TextRenderer,
 }
 
 impl Application {
@@ -158,115 +164,80 @@ impl Application {
         let swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
 
         // Define how we want to bind textures in our render pipeline.
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                entries: &[
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStage::FRAGMENT,
-                        ty: BindingType::SampledTexture {
-                            multisampled: false,
-                            dimension: TextureViewDimension::D2,
-                            component_type: TextureComponentType::Uint,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: ShaderStage::FRAGMENT,
-                        ty: BindingType::Sampler { comparison: false },
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-        // Define how we want to bind uniforms.
-        let uniform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
+        let texture_bind_group_layout_desc = &BindGroupLayoutDescriptor {
+            entries: &[
+                BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
-                        min_binding_size: None,
+                    visibility: ShaderStage::FRAGMENT,
+                    ty: BindingType::SampledTexture {
+                        multisampled: false,
+                        dimension: TextureViewDimension::D2,
+                        component_type: TextureComponentType::Uint,
                     },
                     count: None,
-                }],
-                label: Some("uniform_bind_group_layout"),
-            });
-
-        // Now we'll define some shaders and the render pipeline.
-        let vs_module = device.create_shader_module(include_spirv!("shader.vert.spv"));
-        let fs_module = device.create_shader_module(include_spirv!("shader.frag.spv"));
-        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&texture_bind_group_layout, &uniform_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex_stage: ProgrammableStageDescriptor {
-                module: &vs_module,
-                entry_point: "main",
-            },
-            fragment_stage: Some(ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(RasterizationStateDescriptor {
-                front_face: FrontFace::Ccw,
-                cull_mode: CullMode::Back,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
-                clamp_depth: false,
-            }),
-            color_states: &[ColorStateDescriptor {
-                format: swap_chain_descriptor.format,
-                color_blend: BlendDescriptor {
-                    src_factor: BlendFactor::SrcAlpha,
-                    dst_factor: BlendFactor::OneMinusSrcAlpha,
-                    operation: BlendOperation::Add,
                 },
-                alpha_blend: BlendDescriptor {
-                    src_factor: BlendFactor::SrcAlpha,
-                    dst_factor: BlendFactor::OneMinusSrcAlpha,
-                    operation: BlendOperation::Add,
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStage::FRAGMENT,
+                    ty: BindingType::Sampler { comparison: false },
+                    count: None,
                 },
-                //color_blend: BlendDescriptor::REPLACE,
-                //alpha_blend: BlendDescriptor::REPLACE,
-                write_mask: ColorWrite::ALL,
+            ],
+            label: Some("texture_bind_group_layout"),
+        };
+        // Define how we want to bind uniforms.
+        let uniform_bind_group_layout_desc = wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer {
+                    dynamic: false,
+                    min_binding_size: None,
+                },
+                count: None,
             }],
-            primitive_topology: PrimitiveTopology::TriangleList,
-            depth_stencil_state: None,
-            vertex_state: VertexStateDescriptor {
-                index_format: IndexFormat::Uint16,
-                vertex_buffers: &[Vertex::get_buffer_descriptor()],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
-        });
+            label: Some("uniform_bind_group_layout"),
+        };
 
         let camera = Camera::new(CameraData::Orthographic {
             eye: cgmath::Point2::new(0.0, 0.0),
-            view_height: 1.0,
+            view_height: 2.0,
+            aspect_ratio: 1.0,
+        });
+        let ui_camera = Camera::new(CameraData::Orthographic {
+            eye: cgmath::Point2::new(0.0, 0.0),
+            view_height: 800.0,
             aspect_ratio: 1.0,
         });
 
         // Let's create a batch to render many shapes in a single render pass.
         let batch = Batch::new(
             &device,
-            texture_bind_group_layout,
-            uniform_bind_group_layout,
+            include_spirv!("shader.vert.spv"),
+            include_spirv!("shader.frag.spv"),
+            device.create_bind_group_layout(&texture_bind_group_layout_desc),
+            device.create_bind_group_layout(&uniform_bind_group_layout_desc),
+            swap_chain_descriptor.format,
         );
 
         let texture_am = AssetManager::new(TextureAssetLoader::new(
             Arc::clone(&device),
             Arc::clone(&queue),
         ));
+
+        let mut font_am = AssetManager::new(FontAssetLoader::new());
+
+        let font = font_am.get(AssetPath::new(vec!["NotoSans-Regular.ttf".to_string()]));
+        let text_renderer = TextRenderer::new(
+            Arc::clone(&device),
+            Arc::clone(&queue),
+            device.create_bind_group_layout(&texture_bind_group_layout_desc),
+            device.create_bind_group_layout(&uniform_bind_group_layout_desc),
+            swap_chain_descriptor.format,
+            font,
+            24.0,
+            scale_factor as f32,
+        );
 
         let mut app = Application {
             window,
@@ -279,23 +250,23 @@ impl Application {
 
             swap_chain_descriptor,
             swap_chain,
-            render_pipeline,
 
             last_frame_time: Instant::now(),
             fps_counter: InterpolatedStopwatch::new(100),
 
-            camera,
-            batch,
             texture_am,
+            font_am,
+
+            camera,
+            ui_camera,
+            batch,
+            text_renderer,
         };
 
         // Call resize at the start so that we initialise cameras etc with the correct aspect ratio.
         app.resize(size, Some(scale_factor));
 
-        (
-            app,
-            event_loop,
-        )
+        (app, event_loop)
     }
 
     /// # Arguments
@@ -309,7 +280,15 @@ impl Application {
             .device
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
 
-        self.camera.update_window_size(new_size.width, new_size.height);
+        self.camera
+            .update_window_size(new_size.width, new_size.height);
+        let CameraData::Orthographic {
+            ref mut view_height,
+            ..
+        } = self.ui_camera.get_data_mut();
+        *view_height = new_size.height as f32;
+        self.ui_camera
+            .update_window_size(new_size.width, new_size.height);
     }
 
     /// Renders a single frame, submitting it to the swap chain.
@@ -321,7 +300,10 @@ impl Application {
         self.fps_counter.tick();
 
         if self.fps_counter.ticks % 100 == 0 {
-            tracing::trace!("{:.2} FPS", 1.0 / self.fps_counter.average_time().as_secs_f64());
+            tracing::trace!(
+                "{:.2} FPS",
+                1.0 / self.fps_counter.average_time().as_secs_f64()
+            );
         }
 
         {
@@ -399,12 +381,15 @@ impl Application {
             &self.device,
             &self.queue,
             &frame,
-            &self.render_pipeline,
-            self.texture_am
+            &self
+                .texture_am
                 .get(AssetPath::new(vec!["test.png".to_string()])),
             &self.camera,
             renderables,
         );
+
+        self.text_renderer
+            .draw_text("abcdefghijklmnopqrstuvwxyz", 200, &frame, &self.ui_camera);
     }
 
     /// Executes the application.

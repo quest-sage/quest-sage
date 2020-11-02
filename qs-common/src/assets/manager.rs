@@ -1,5 +1,6 @@
 use std::hash::Hash;
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Weak};
+use tokio::sync::RwLock;
 use std::{collections::HashMap, ops::Deref, sync::RwLockReadGuard};
 
 /// Represents a globally unique asset ID.
@@ -86,7 +87,7 @@ where
                 stored_assets.insert(id, Arc::clone(&data));
                 tokio::spawn(async move {
                     let loaded = loader.load(k).await;
-                    let mut data = data.write().unwrap();
+                    let mut data = data.write().await;
                     *data = AssetManager::<K, T, L>::on_load(&mut *data, loaded);
                 });
                 asset
@@ -130,11 +131,10 @@ impl<T> Asset<T> {
     ///
     /// The function here should be very lightweight; this could cause other threads to block while the function is running if they're waiting for
     /// access to this asset!
-    pub fn on_load(&self, func: impl FnOnce(&mut T) + Send + Sync + 'static) {
+    pub async fn on_load(&self, func: impl FnOnce(&mut T) + Send + Sync + 'static) {
         if let Some(data) = self.data.upgrade() {
             match &mut *data
-                .write()
-                .expect("Could not lock load functions for asset")
+                .write().await
             {
                 LoadStatus::Loading(load, _) => load.push(Box::new(func)),
                 LoadStatus::Loaded(t) => func(t),
@@ -148,11 +148,10 @@ impl<T> Asset<T> {
     ///
     /// The function here should be very lightweight; this could cause other threads to block while the function is running if they're waiting for
     /// access to this asset!
-    pub fn on_fail(&self, func: impl FnOnce(&LoadError) + Send + Sync + 'static) {
+    pub async fn on_fail(&self, func: impl FnOnce(&LoadError) + Send + Sync + 'static) {
         if let Some(data) = self.data.upgrade() {
             match &mut *data
-                .write()
-                .expect("Could not lock fail functions for asset")
+                .write().await
             {
                 LoadStatus::Loading(_, fail) => fail.push(Box::new(func)),
                 LoadStatus::Loaded(_) => {}
@@ -162,15 +161,31 @@ impl<T> Asset<T> {
     }
 
     /// If the asset is loaded, run this function on it.
-    pub fn if_loaded(&self, func: impl FnOnce(&T)) {
+    pub async fn if_loaded(&self, func: impl FnOnce(&T)) {
         match self.data.upgrade() {
-            Some(data) => match &*data.read().expect("Could not lock asset for reading") {
+            Some(data) => match &*data.read().await {
                 LoadStatus::Loading(_, _) => {}
                 LoadStatus::Loaded(value) => func(value),
                 LoadStatus::Failed(_) => {}
             },
             None => {}
         }
+    }
+
+    /// Waits for the asset to be loaded (or until the load fails).
+    pub async fn wait_until_loaded_or_failed(&self) {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let tx2 = tx.clone();
+        self.on_load(move |_| { futures::executor::block_on(tx.send(())).expect("asset load/fail detection channel was unexpectedly dropped (tx 1)"); }).await;
+        self.on_fail(move |_| { futures::executor::block_on(tx2.send(())).expect("asset load/fail detection channel was unexpectedly dropped (tx 2)"); }).await;
+        rx.recv().await.expect("asset load/fail detection channel was unexpectedly dropped (rx), this could be because the asset manager was dropped");
+    }
+
+    /// Waits for the asset to be loaded. If the load fails, this panics.
+    pub async fn wait_until_loaded(&self) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.on_load(move |_| { tx.send(()).expect("asset load detection channel was unexpectedly dropped (tx)"); }).await;
+        rx.await.expect("asset load detection channel was unexpectedly dropped (rx), this could be because the asset failed to load or because the asset manager was dropped");
     }
 }
 

@@ -1479,6 +1479,7 @@ dependencies = [
  "glob",
  "image",
  "itertools",
+ "lazy_static",
  "qs-common",
  "rusttype",
  "shaderc",
@@ -1495,6 +1496,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "find_folder",
+ "futures",
  "lazy_static",
  "tokio",
  "tracing",
@@ -1978,6 +1980,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7137dbb0abee577362ccdc7df21605cfcbb949243aeab47dac9ea6ef7d830e21"
 dependencies = [
  "bytes",
+ "fnv",
  "memchr",
  "num_cpus",
  "pin-project-lite",

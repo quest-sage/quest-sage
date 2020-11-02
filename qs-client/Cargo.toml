@@ -18,7 +18,7 @@ bytemuck = "1.4"
 rusttype = { version = "0.9.2", features = ["gpu_cache"] }
 
 # Multithreaded runtime
-tokio = { version = "0.3", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "0.3", features = ["rt-multi-thread", "macros", "sync"] }
 tracing = "0.1.21"
 tracing-subscriber = "0.2.14"
 futures = "0.3"
@@ -30,8 +30,8 @@ contracts = "0.6"
 itertools = "0.9"
 
 # Utilities
+lazy_static = "1.4"
 async-trait = "0.1.41"
-
 
 [build-dependencies]
 # GLSL to SPIR-V shader compilation utilities

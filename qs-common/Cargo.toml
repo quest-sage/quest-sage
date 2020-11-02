@@ -8,6 +8,7 @@ edition = "2018"
 # Multithreaded runtime
 tokio = { version = "0.3", features = ["rt-multi-thread", "macros", "io-util", "fs"] }
 tracing = "0.1.21"
+futures = "0.3"
 
 # Asynchronous traits and trait impls
 async-trait = "0.1.41"

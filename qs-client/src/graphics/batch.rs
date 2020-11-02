@@ -197,7 +197,7 @@ impl Batch {
 
     /// Renders the contents of the `verts` and `inds` buffers to the screen.
     #[inline(always)]
-    fn flush(
+    async fn flush(
         &mut self,
         device: &Device,
         queue: &Queue,
@@ -279,7 +279,7 @@ impl Batch {
 
             // TODO make a default texture for unloaded textures.
             if let Some(asset) = texture.data.upgrade() {
-                if let LoadStatus::Loaded(tex) = &*asset.read().unwrap() {
+                if let LoadStatus::Loaded(tex) = &*asset.read().await {
                     render(tex);
                 }
             }
@@ -292,9 +292,7 @@ impl Batch {
     /// If there is insufficient capacity to store this amount of new vertices and indices, we will flush
     /// the batch's buffers so that they are free to be used.
     #[inline(always)]
-    #[contracts::requires(new_verts < MAX_VERTEX_COUNT)]
-    #[contracts::requires(new_inds < MAX_INDEX_COUNT)]
-    fn ensure_capacity(
+    async fn ensure_capacity(
         &mut self,
         device: &Device,
         queue: &Queue,
@@ -310,11 +308,11 @@ impl Batch {
         new_inds: usize,
     ) {
         if verts.len() + new_verts > MAX_VERTEX_COUNT || inds.len() + new_inds > MAX_INDEX_COUNT {
-            self.flush(device, queue, frame, encoder, texture, verts, inds);
+            self.flush(device, queue, frame, encoder, texture, verts, inds).await;
         }
     }
 
-    pub fn render(
+    pub async fn render(
         &mut self,
         device: &Device,
         queue: &Queue,
@@ -350,7 +348,7 @@ impl Batch {
                         &mut inds,
                         3,
                         3,
-                    );
+                    ).await;
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -370,7 +368,7 @@ impl Batch {
                         &mut inds,
                         4,
                         6,
-                    );
+                    ).await;
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -394,6 +392,6 @@ impl Batch {
             texture,
             &mut verts,
             &mut inds,
-        );
+        ).await;
     }
 }

@@ -101,6 +101,8 @@ pub struct Application {
     /// A batch for rendering many shapes in a single draw call.
     batch: Batch,
     text_renderer: TextRenderer,
+
+    test_text: RichText,
 }
 
 impl Application {
@@ -227,17 +229,50 @@ impl Application {
 
         let mut font_am = AssetManager::new(FontAssetLoader::new());
 
-        let font = font_am.get(AssetPath::new(vec!["NotoSans-Regular.ttf".to_string()]));
         let text_renderer = TextRenderer::new(
             Arc::clone(&device),
             Arc::clone(&queue),
             device.create_bind_group_layout(&texture_bind_group_layout_desc),
             device.create_bind_group_layout(&uniform_bind_group_layout_desc),
             swap_chain_descriptor.format,
-            font,
-            24.0,
             scale_factor as f32,
         );
+
+        let test_text = RichText::new(None);
+        let test_font_family = Arc::new(FontFamily::new(vec![FontFace::new(
+            "Noto Sans".to_string(),
+            font_am.get(AssetPath::new(vec!["NotoSans-Regular.ttf".to_string()])),
+            Some(font_am.get(AssetPath::new(vec!["NotoSans-Bold.ttf".to_string()]))),
+            Some(font_am.get(AssetPath::new(vec!["NotoSans-Italic.ttf".to_string()]))),
+            Some(font_am.get(AssetPath::new(vec!["NotoSans-BoldItalic.ttf".to_string()]))),
+        )]));
+        test_text.set_text(test_font_family)
+        .h1(|b| b
+            .write("Header thing ".to_string())
+            .italic(|b| b
+                .write("emphasised".to_string())
+            )
+        )
+        .end_paragraph()
+        .write("Hello, ".to_string())
+        .italic(|b| b
+            .write("world".to_string())
+        )
+        .write("!".to_string())
+        .end_paragraph()
+        .write("Regular ".to_string())
+        .italic(|b| b
+            .write("Italic ".to_string())
+            .bold(|b| b
+                .write("Bold Italic ".to_string())
+            )
+        )
+        .bold(|b| b
+            .write("Bold".to_string())
+        )
+        .end_paragraph()
+        .write("äÄöÖüÜß€".to_string())
+        .finish();
 
         let mut app = Application {
             window,
@@ -261,6 +296,8 @@ impl Application {
             ui_camera,
             batch,
             text_renderer,
+
+            test_text,
         };
 
         // Call resize at the start so that we initialise cameras etc with the correct aspect ratio.
@@ -292,7 +329,7 @@ impl Application {
     }
 
     /// Renders a single frame, submitting it to the swap chain.
-    pub fn render(&mut self) {
+    pub async fn render(&mut self) {
         let this_frame_time = Instant::now();
         let delta_duration = this_frame_time - self.last_frame_time;
         self.last_frame_time = this_frame_time;
@@ -386,15 +423,18 @@ impl Application {
                 .get(AssetPath::new(vec!["test.png".to_string()])),
             &self.camera,
             renderables,
-        );
+        ).await;
 
         self.text_renderer
-            .draw_text("abcdefghijklmnopqrstuvwxyz", 200, &frame, &self.ui_camera);
+            .draw_text(&self.test_text, &frame, &self.ui_camera).await;
     }
 
     /// Executes the application.
-    pub async fn run(mut self, event_loop: EventLoop<()>) {
+    pub fn run(mut self, rt: tokio::runtime::Runtime, event_loop: EventLoop<()>) {
         event_loop.run(move |event, _, control_flow| {
+            // IMPORTANT:
+            // Nothing inside of this main loop may ever yield to the tokio runtime.
+            // This might cause tokio to move this event loop off the main thread, which causes some big problems.
             match event {
                 Event::WindowEvent { event, window_id } if window_id == self.window.id() => {
                     match event {
@@ -420,7 +460,7 @@ impl Application {
                 }
 
                 Event::RedrawRequested(window_id) if window_id == self.window.id() => {
-                    self.render();
+                    futures::executor::block_on(self.render());
                 }
 
                 Event::MainEventsCleared => {

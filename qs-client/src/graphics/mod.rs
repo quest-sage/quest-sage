@@ -250,7 +250,9 @@ impl Application {
         .h1(|b| b
             .write("Header thing ".to_string())
             .italic(|b| b
-                .write("emphasised".to_string())
+                .coloured(Colour::CYAN, |b| b
+                    .write("emphasised".to_string())
+                )
             )
         )
         .end_paragraph()

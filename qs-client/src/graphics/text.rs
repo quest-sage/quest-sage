@@ -90,43 +90,45 @@ impl TextRenderer {
     ) {
         let text = &*text.typeset.read().await;
         if let Some(text) = text {
-            for (font, glyph) in &text.glyphs {
+            for RenderableGlyph { font, glyph, ..} in &text.glyphs {
                 self.cache.queue_glyph(*font, glyph.clone());
             }
 
             let queue = &self.queue;
             let cache = &mut self.cache;
-            self.font_texture.if_loaded(|font_texture| {
-                cache
-                    .cache_queued(|rect, data| {
-                        queue.write_texture(
-                            wgpu::TextureCopyView {
-                                texture: &font_texture.texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d {
-                                    x: rect.min.x,
-                                    y: rect.min.y,
-                                    z: 0,
+            self.font_texture
+                .if_loaded(|font_texture| {
+                    cache
+                        .cache_queued(|rect, data| {
+                            queue.write_texture(
+                                wgpu::TextureCopyView {
+                                    texture: &font_texture.texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d {
+                                        x: rect.min.x,
+                                        y: rect.min.y,
+                                        z: 0,
+                                    },
                                 },
-                            },
-                            data,
-                            wgpu::TextureDataLayout {
-                                offset: 0,
-                                bytes_per_row: rect.width(),
-                                rows_per_image: 0,
-                            },
-                            wgpu::Extent3d {
-                                width: rect.width(),
-                                height: rect.height(),
-                                depth: 1,
-                            },
-                        );
-                    })
-                    .unwrap();
-            }).await;
+                                data,
+                                wgpu::TextureDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: rect.width(),
+                                    rows_per_image: 0,
+                                },
+                                wgpu::Extent3d {
+                                    width: rect.width(),
+                                    height: rect.height(),
+                                    depth: 1,
+                                },
+                            );
+                        })
+                        .unwrap();
+                })
+                .await;
 
             let mut items = Vec::new();
-            for (font, glyph) in &text.glyphs {
+            for RenderableGlyph { font, colour, glyph } in &text.glyphs {
                 if let Some((uv_rect, pixel_rect)) = cache
                     .rect_for(*font, glyph)
                     .expect("Could not load cache entry for glyph")
@@ -135,39 +137,42 @@ impl TextRenderer {
                     let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
                     let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
                     let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
+                    let color = (*colour).into();
                     items.push(Renderable::Quadrilateral(
                         Vertex {
                             position: [x1, y1, 0.0],
-                            color: [1.0, 1.0, 1.0, 1.0],
+                            color,
                             tex_coords: [u1, v1],
                         },
                         Vertex {
                             position: [x2, y1, 0.0],
-                            color: [1.0, 1.0, 1.0, 1.0],
+                            color,
                             tex_coords: [u2, v1],
                         },
                         Vertex {
                             position: [x2, y2, 0.0],
-                            color: [1.0, 1.0, 1.0, 1.0],
+                            color,
                             tex_coords: [u2, v2],
                         },
                         Vertex {
                             position: [x1, y2, 0.0],
-                            color: [1.0, 1.0, 1.0, 1.0],
+                            color,
                             tex_coords: [u1, v2],
                         },
                     ));
                 }
             }
 
-            self.batch.render(
-                &*self.device,
-                &*self.queue,
-                frame,
-                &self.font_texture,
-                camera,
-                items.into_iter(),
-            ).await;
+            self.batch
+                .render(
+                    &*self.device,
+                    &*self.queue,
+                    frame,
+                    &self.font_texture,
+                    camera,
+                    items.into_iter(),
+                )
+                .await;
         }
     }
 }
@@ -264,6 +269,27 @@ pub struct Colour {
     a: f32,
 }
 
+impl Colour {
+    pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
+        Self { r, g, b, a: 1.0 }
+    }
+
+    pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self { r, g, b, a }
+    }
+
+    pub const WHITE: Self = Self::rgb(1.0, 1.0, 1.0);
+    pub const BLACK: Self = Self::rgb(0.0, 0.0, 0.0);
+    pub const CLEAR: Self = Self::rgba(1.0, 1.0, 1.0, 0.0);
+
+    pub const RED: Self = Self::rgb(1.0, 0.0, 0.0);
+    pub const GREEN: Self = Self::rgb(0.0, 1.0, 0.0);
+    pub const BLUE: Self = Self::rgb(0.0, 0.0, 1.0);
+    pub const CYAN: Self = Self::rgb(0.0, 1.0, 1.0);
+    pub const MAGENTA: Self = Self::rgb(1.0, 0.0, 1.0);
+    pub const YELLOW: Self = Self::rgb(1.0, 1.0, 0.0);
+}
+
 impl Default for Colour {
     fn default() -> Self {
         Self {
@@ -272,6 +298,12 @@ impl Default for Colour {
             b: 1.0,
             a: 1.0,
         }
+    }
+}
+
+impl From<Colour> for [f32; 4] {
+    fn from(colour: Colour) -> [f32; 4] {
+        [colour.r, colour.g, colour.b, colour.a]
     }
 }
 
@@ -418,6 +450,14 @@ impl RichTextContentsBuilder {
         self.internal(style, styled)
     }
 
+    /// Apply a colour to the rich text produced in this function.
+    /// Do not call `finish` on this internal builder.
+    pub fn coloured(self, colour: Colour, styled: impl FnOnce(Self) -> Self) -> Self {
+        let mut style = self.style.clone();
+        style.colour = colour;
+        self.internal(style, styled)
+    }
+
     /// Call the given `styled` function on a new internal builder with the given style,
     /// then append all of its result data to this original builder.
     /// This allows functions to create styles on specific spans of text with ease.
@@ -475,7 +515,13 @@ struct TypesetText {
     size: (u32, u32),
 
     /// A list of glyphs together with their font IDs. New font IDs are created for each font face ID, style and size variant.
-    glyphs: Vec<(usize, PositionedGlyph<'static>)>,
+    glyphs: Vec<RenderableGlyph>,
+}
+
+struct RenderableGlyph {
+    font: usize,
+    colour: Colour,
+    glyph: PositionedGlyph<'static>,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -614,6 +660,7 @@ async fn typeset_rich_text(
         let mut line = Vec::new();
         // The current X position on the line.
         let mut caret_x = 0.0;
+        let mut line_height = 0.0;
 
         // Contains the last glyph's font ID and glyph ID, if there was a previous glyph on this line.
         let mut last_glyph = None;
@@ -683,7 +730,7 @@ async fn typeset_rich_text(
                 }
 
                 last_glyph = Some((font, base_glyph.id()));
-                let mut glyph = base_glyph.scaled(scale).positioned(point(caret_x, caret_y));
+                let glyph = base_glyph.scaled(scale).positioned(point(caret_x, caret_y));
                 // TODO check line overflow
                 /*if let Some(bb) = glyph.pixel_bounding_box() {
                     if bb.max.x > width as i32 {
@@ -693,12 +740,24 @@ async fn typeset_rich_text(
                     }
                 }*/
                 caret_x += glyph.unpositioned().h_metrics().advance_width;
-                line.push((font, glyph));
+                let v_metrics = glyph.unpositioned().font().v_metrics(scale);
+                let glyph_line_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
+                if glyph_line_height > line_height {
+                    line_height = glyph_line_height
+                }
+                line.push(RenderableGlyph {
+                    font,
+                    colour: segment.style.colour,
+                    glyph,
+                });
             }
         }
 
-        // TODO calculate paragraph separation
-        caret_y += 64.0;
+        tracing::info!("Line height {}", line_height);
+        caret_y += line_height;
+        for RenderableGlyph { glyph, ..} in &mut line {
+            glyph.set_position(point(glyph.position().x, glyph.position().y + line_height))
+        }
         glyphs.append(&mut line);
     }
 

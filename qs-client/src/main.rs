@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let _guard = rt.enter();
     let (app, event_loop) = futures::executor::block_on(graphics::Application::new());
-    app.run(rt, event_loop);
+    app.run(event_loop);
 
     Ok(())
 }

@@ -67,8 +67,19 @@ impl TextRenderer {
             format: wgpu::TextureFormat::R8Unorm,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
-        let font_texture =
-            OwnedAsset::new(crate::graphics::Texture::from_wgpu(&*device, font_texture));
+        let font_texture = OwnedAsset::new(crate::graphics::Texture::from_wgpu_with_sampler(
+            &*device,
+            font_texture,
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+        ));
 
         Self {
             device,
@@ -90,7 +101,7 @@ impl TextRenderer {
     ) {
         let text = &*text.typeset.read().await;
         if let Some(text) = text {
-            for RenderableGlyph { font, glyph, ..} in &text.glyphs {
+            for RenderableGlyph { font, glyph, .. } in &text.glyphs {
                 self.cache.queue_glyph(*font, glyph.clone());
             }
 
@@ -128,7 +139,12 @@ impl TextRenderer {
                 .await;
 
             let mut items = Vec::new();
-            for RenderableGlyph { font, colour, glyph } in &text.glyphs {
+            for RenderableGlyph {
+                font,
+                colour,
+                glyph,
+            } in &text.glyphs
+            {
                 if let Some((uv_rect, pixel_rect)) = cache
                     .rect_for(*font, glyph)
                     .expect("Could not load cache entry for glyph")
@@ -235,10 +251,13 @@ impl FontFamily {
 }
 
 /// Represents a single segment of rich text that has the same formatting.
+/// We define a segment to be completely indivisible, so words are often split into many segments.
 #[derive(Debug, Clone)]
 struct RichTextSegment {
     text: String,
     style: RichTextStyle,
+    /// If true, this segment cannot be split up with the previous segment.
+    glue_to_previous: bool,
 }
 
 /// The styling information (font, size, bold, italic, colour) of a span of rich text.
@@ -405,12 +424,44 @@ pub struct RichTextContentsBuilder {
 }
 
 impl RichTextContentsBuilder {
-    pub fn write(mut self, text: String) -> Self {
+    /// Write some text into this rich text object.
+    /// This function copies the input text, splitting it by whitespace, which is consumed.
+    pub fn write(self, text: &str) -> Self {
+        self.write_maybe_glued(text, false)
+    }
+
+    /// Write some text into this rich text object, without
+    /// inserting a space after the previous call to `write`.
+    pub fn write_glued(self, text: &str) -> Self {
+        self.write_maybe_glued(text, true)
+    }
+
+    /// Writes some text which might be glued to the previous text or not, depending
+    /// on the `glue_to_previous` argument.
+    pub fn write_maybe_glued(mut self, text: &str, mut glue_to_previous: bool) -> Self {
+        let chars = text.chars().collect::<Vec<_>>(); // TODO could optimise this, we only really need two chars at a time
+        let mut word_start_index = 0;
+        for i in 1..chars.len() {
+            if self.should_split_between(chars[i - 1], chars[i]) {
+                self.current_paragraph.push(RichTextSegment {
+                    text: chars[word_start_index..i].iter().copied().collect(),
+                    style: self.style.clone(),
+                    glue_to_previous,
+                });
+                word_start_index = i;
+                glue_to_previous = false;
+            }
+        }
         self.current_paragraph.push(RichTextSegment {
-            text,
+            text: chars[word_start_index..].iter().copied().collect(),
             style: self.style.clone(),
+            glue_to_previous,
         });
         self
+    }
+
+    fn should_split_between(&self, left: char, right: char) -> bool {
+        left.is_whitespace() && !right.is_whitespace()
     }
 
     /// Call this if you want to begin a new paragraph.
@@ -653,120 +704,178 @@ async fn typeset_rich_text(
 ) -> TypesetText {
     let scale_factor = 1.0;
 
-    let mut size = (0, 0);
+    let mut largest_line_width = 0.0;
     let mut caret_y = 0.0;
     let mut glyphs = Vec::new();
     for paragraph in paragraphs {
-        let mut line = Vec::new();
-        // The current X position on the line.
-        let mut caret_x = 0.0;
-        let mut line_height = 0.0;
+        let mut segments: &[RichTextSegment] = &paragraph;
+        while !segments.is_empty() {
+            let mut line_result = typeset_rich_text_line(segments, max_width, scale_factor).await;
+            tracing::trace!(
+                "Rendering line of {} segments: {} excess",
+                segments.len(),
+                line_result.excess.len()
+            );
+            segments = line_result.excess;
 
-        // Contains the last glyph's font ID and glyph ID, if there was a previous glyph on this line.
-        let mut last_glyph = None;
-        for segment in paragraph {
-            let scale = match segment.style.size {
-                FontSize::H1 => Scale::uniform(72.0 * scale_factor),
-                FontSize::H2 => Scale::uniform(48.0 * scale_factor),
-                FontSize::H3 => Scale::uniform(36.0 * scale_factor),
-                FontSize::Text => Scale::uniform(24.0 * scale_factor),
-            };
+            caret_y += line_result.line_height;
+            if line_result.line_width > largest_line_width {
+                largest_line_width = line_result.line_width;
+            }
+            for RenderableGlyph { glyph, .. } in &mut line_result.line {
+                glyph.set_position(point(glyph.position().x, caret_y))
+            }
+            glyphs.append(&mut line_result.line);
+        }
+    }
 
-            for c in segment.text.chars() {
-                let mut font_and_glyph = get_font_for_character(
+    TypesetText {
+        size: (largest_line_width as u32, caret_y as u32),
+        glyphs,
+    }
+}
+
+struct RichTextLineTypesetResult<'a> {
+    line: Vec<RenderableGlyph>,
+    line_width: f32,
+    line_height: f32,
+    excess: &'a [RichTextSegment],
+}
+
+/// Typeset a single line. Assumes that the Y coordinate of each character is zero.
+async fn typeset_rich_text_line<'a>(
+    paragraph: &'a [RichTextSegment],
+    max_width: Option<u32>,
+    scale_factor: f32,
+) -> RichTextLineTypesetResult<'a> {
+    // The current line, which is filled with glyphs.
+    let mut line = Vec::new();
+    // The current word, defined as a sequence of whitespace characters followed by one or more non-whitespace characters.
+    let mut word = Vec::new();
+    // The segment index of the start of the current word. This is where we backtrack to if a word could not be added to this line.
+    let mut word_start_index = 0;
+
+    // The current X position on the line.
+    let mut caret_x = 0.0;
+    let mut line_height = 0.0;
+
+    // Contains the last glyph's font ID and glyph ID, if there was a previous glyph on this line.
+    let mut last_glyph = None;
+
+    let mut segment_index = 0;
+    while segment_index < paragraph.len() {
+        let segment = &paragraph[segment_index];
+
+        let scale = match segment.style.size {
+            FontSize::H1 => Scale::uniform(72.0 * scale_factor),
+            FontSize::H2 => Scale::uniform(48.0 * scale_factor),
+            FontSize::H3 => Scale::uniform(36.0 * scale_factor),
+            FontSize::Text => Scale::uniform(24.0 * scale_factor),
+        };
+
+        if !segment.glue_to_previous {
+            // Add the previous word to the line, as we now know it completely fits.
+            line.append(&mut word);
+            word_start_index = segment_index;
+        }
+
+        for c in segment.text.chars() {
+            let mut font_and_glyph = get_font_for_character(
+                &*segment.style.font_family,
+                segment.style.emphasis,
+                segment.style.size,
+                c,
+            )
+            .await;
+
+            if let None = font_and_glyph {
+                // Replace this glyph with a generic 'character not found' glyph.
+                font_and_glyph = get_font_for_character(
                     &*segment.style.font_family,
                     segment.style.emphasis,
                     segment.style.size,
-                    c,
+                    '\u{FFFD}',
                 )
                 .await;
 
                 if let None = font_and_glyph {
-                    // Replace this glyph with a generic '?' glyph.
+                    // If that glyph wasn't in the font, we'll just try a normal question mark.
                     font_and_glyph = get_font_for_character(
                         &*segment.style.font_family,
                         segment.style.emphasis,
                         segment.style.size,
-                        '\u{FFFD}',
+                        '?',
                     )
                     .await;
 
                     if let None = font_and_glyph {
-                        // If even that glyph wasn't in the font, we'll just try a normal question mark.
-                        font_and_glyph = get_font_for_character(
-                            &*segment.style.font_family,
-                            segment.style.emphasis,
-                            segment.style.size,
-                            '?',
-                        )
-                        .await;
-
-                        if let None = font_and_glyph {
-                            // Really at this point there's no alternatives left.
-                            continue;
-                        }
+                        // Really at this point there's no alternatives left.
+                        // We'll just not render this character.
+                        continue;
                     }
                 }
+            }
 
-                let (font, base_glyph) =
-                    font_and_glyph.expect("no replacement characters found in font");
-                if let Some((last_font_id, last_glyph_id)) = last_glyph.take() {
-                    if font == last_font_id {
-                        let font_id_to_font_map = FONT_ID_TO_FONT_MAP.read().await;
-                        let font_asset = font_id_to_font_map
-                            .get(&font)
-                            .expect("could not retrieve font for font ID");
-                        let font_asset_data = font_asset
-                            .data
-                            .upgrade()
-                            .expect("asset manager containing font was dropped");
-                        if let qs_common::assets::LoadStatus::Loaded(font_data) =
-                            &*font_asset_data.read().await
-                        {
-                            caret_x +=
-                                font_data.pair_kerning(scale, last_glyph_id, base_glyph.id());
+            let (font, base_glyph) =
+                font_and_glyph.expect("no replacement characters found in font");
+            if let Some((last_font_id, last_glyph_id)) = last_glyph.take() {
+                if font == last_font_id {
+                    let font_id_to_font_map = FONT_ID_TO_FONT_MAP.read().await;
+                    let font_asset = font_id_to_font_map
+                        .get(&font)
+                        .expect("could not retrieve font for font ID");
+                    let font_asset_data = font_asset
+                        .data
+                        .upgrade()
+                        .expect("asset manager containing font was dropped");
+                    if let qs_common::assets::LoadStatus::Loaded(font_data) =
+                        &*font_asset_data.read().await
+                    {
+                        caret_x += font_data.pair_kerning(scale, last_glyph_id, base_glyph.id());
+                    };
+                }
+            }
+
+            last_glyph = Some((font, base_glyph.id()));
+            let glyph = base_glyph.scaled(scale).positioned(point(caret_x, 0.0));
+
+            if let Some(max_width) = max_width {
+                if let Some(bb) = glyph.pixel_bounding_box() {
+                    if bb.max.x >= max_width as i32 {
+                        // We've exceeded the width of the line.
+                        // So, we won't submit the current word, and we'll just return here.
+                        return RichTextLineTypesetResult {
+                            line,
+                            line_height,
+                            line_width: caret_x,
+                            excess: &paragraph[word_start_index..],
                         };
                     }
                 }
-
-                last_glyph = Some((font, base_glyph.id()));
-                let glyph = base_glyph.scaled(scale).positioned(point(caret_x, caret_y));
-                // TODO check line overflow
-                /*if let Some(bb) = glyph.pixel_bounding_box() {
-                    if bb.max.x > width as i32 {
-                        caret = point(0.0, caret.y + advance_height);
-                        glyph.set_position(caret);
-                        last_glyph_id = None;
-                    }
-                }*/
-                caret_x += glyph.unpositioned().h_metrics().advance_width;
-                let v_metrics = glyph.unpositioned().font().v_metrics(scale);
-                let glyph_line_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
-                if glyph_line_height > line_height {
-                    line_height = glyph_line_height
-                }
-                line.push(RenderableGlyph {
-                    font,
-                    colour: segment.style.colour,
-                    glyph,
-                });
             }
+
+            caret_x += glyph.unpositioned().h_metrics().advance_width;
+            let v_metrics = glyph.unpositioned().font().v_metrics(scale);
+            let glyph_line_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
+            if glyph_line_height > line_height {
+                line_height = glyph_line_height
+            }
+            word.push(RenderableGlyph {
+                font,
+                colour: segment.style.colour,
+                glyph,
+            });
         }
 
-        tracing::info!("Line height {}", line_height);
-        caret_y += line_height;
-        for RenderableGlyph { glyph, ..} in &mut line {
-            glyph.set_position(point(glyph.position().x, glyph.position().y + line_height))
-        }
-        glyphs.append(&mut line);
+        segment_index += 1;
     }
 
-    TypesetText { size, glyphs }
-}
-
-/// Some text that can be rendered and manipulated.
-/// Contains a reference to the fonts that we can use to shape and then render the text.
-struct RenderableText {
-    font_family: Arc<FontFamily>,
-    text: RichText,
+    // Add the current word to the line.
+    line.append(&mut word);
+    RichTextLineTypesetResult {
+        line,
+        line_height,
+        line_width: caret_x,
+        excess: &[],
+    }
 }

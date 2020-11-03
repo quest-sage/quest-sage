@@ -238,7 +238,7 @@ impl Application {
             scale_factor as f32,
         );
 
-        let test_text = RichText::new(None);
+        let test_text = RichText::new(Some(512));
         let test_font_family = Arc::new(FontFamily::new(vec![FontFace::new(
             "Noto Sans".to_string(),
             font_am.get(AssetPath::new(vec!["NotoSans-Regular.ttf".to_string()])),
@@ -248,32 +248,34 @@ impl Application {
         )]));
         test_text.set_text(test_font_family)
         .h1(|b| b
-            .write("Header thing ".to_string())
+            .write("Header thing ")
             .italic(|b| b
                 .coloured(Colour::CYAN, |b| b
-                    .write("emphasised".to_string())
+                    .write("emphasised")
                 )
             )
         )
         .end_paragraph()
-        .write("Hello, ".to_string())
+        .write("Hello, ")
         .italic(|b| b
-            .write("world".to_string())
+            .write("world")
         )
-        .write("!".to_string())
+        .write("!")
         .end_paragraph()
-        .write("Regular ".to_string())
+        .write("Regular ")
         .italic(|b| b
-            .write("Italic ".to_string())
+            .write("Italic ")
             .bold(|b| b
-                .write("Bold Italic ".to_string())
+                .write("Bold Italic ")
             )
         )
         .bold(|b| b
-            .write("Bold".to_string())
+            .write("Bold")
         )
         .end_paragraph()
-        .write("äÄöÖüÜß€".to_string())
+        .write("äÄöÖüÜß€")
+        .end_paragraph()
+        .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish();
 
         let mut app = Application {
@@ -432,7 +434,7 @@ impl Application {
     }
 
     /// Executes the application.
-    pub fn run(mut self, rt: tokio::runtime::Runtime, event_loop: EventLoop<()>) {
+    pub fn run(mut self, event_loop: EventLoop<()>) {
         event_loop.run(move |event, _, control_flow| {
             // IMPORTANT:
             // Nothing inside of this main loop may ever yield to the tokio runtime.

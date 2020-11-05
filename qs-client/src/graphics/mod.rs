@@ -238,7 +238,7 @@ impl Application {
             scale_factor as f32,
         );
 
-        let test_text = RichText::new(Some(512));
+        let mut test_text = RichText::new(Some(512));
         let test_font_family = Arc::new(FontFamily::new(vec![FontFace::new(
             "Noto Sans".to_string(),
             font_am.get(AssetPath::new(vec!["NotoSans-Regular.ttf".to_string()])),

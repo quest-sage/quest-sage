@@ -376,6 +376,11 @@ pub struct RichText {
     /// thus assigning a value to this variable.
     typeset: Arc<RwLock<Option<TypesetText>>>,
 
+    /// If we're currently running a task in the background to typeset this piece of text, this contains a channel that can be
+    /// used to cancel that task. Once a value is sent through this channel, the background task will not write any values to the
+    /// `typeset` variable.
+    cancel_typeset_task: Option<tokio::sync::oneshot::Sender<()>>,
+
     /// Contains a value in pixels if the rich text object has a maximum width.
     max_width: Option<u32>,
 }
@@ -385,11 +390,16 @@ impl RichText {
         Self {
             paragraphs: Arc::new(RwLock::new(Vec::new())),
             typeset: Arc::new(RwLock::new(None)),
+            cancel_typeset_task: None,
             max_width,
         }
     }
 
-    pub fn set_text(&self, font_family: Arc<FontFamily>) -> RichTextContentsBuilder {
+    pub fn set_text(&mut self, font_family: Arc<FontFamily>) -> RichTextContentsBuilder {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if let Some(old_cancel_typeset_task) = self.cancel_typeset_task.replace(tx) {
+            old_cancel_typeset_task.send(());
+        }
         RichTextContentsBuilder {
             output: Arc::clone(&self.paragraphs),
             typeset: Arc::clone(&self.typeset),
@@ -398,6 +408,7 @@ impl RichText {
             current_paragraph: Vec::new(),
             max_width: self.max_width,
             is_internal: false,
+            cancel_receiver: Some(rx),
         }
     }
 }
@@ -421,6 +432,12 @@ pub struct RichTextContentsBuilder {
     /// True if this builder is an "internal" builder, i.e. if it's being used to style some subset of the
     /// text, and isn't the main contents builder. If `finish` is called on an internal builder, it will panic.
     is_internal: bool,
+
+    /// If a value is received on this channel, the task will be terminated and no output will be stored.
+    /// This can happen when we set the text again while we're still typesetting the old value. The typesetting task
+    /// we're currently doing is therefore pointless, so it can be cancelled.
+    /// This is only None if this is an internal builder. It is Some otherwise.
+    cancel_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl RichTextContentsBuilder {
@@ -523,6 +540,7 @@ impl RichTextContentsBuilder {
             current_paragraph: Vec::new(),
             max_width: self.max_width,
             is_internal: true,
+            cancel_receiver: None,
         };
         let mut result = styled(child);
         for mut paragraph in result.paragraphs {
@@ -537,7 +555,7 @@ impl RichTextContentsBuilder {
     ///
     /// # Panics
     /// If this is an internal builder (e.g. produced by the `h1` function), this will panic.
-    pub fn finish(self) {
+    pub fn finish(mut self) {
         if self.is_internal {
             panic!("cannot call `finish` on internal builders");
         }
@@ -549,13 +567,17 @@ impl RichTextContentsBuilder {
         let output = self.output;
         let typeset = self.typeset;
         let max_width = self.max_width;
+        let cancel_receiver = self.cancel_receiver.take();
         tokio::spawn(async move {
             // We clone the paragraph data here so that the background thread can't cause the main thread to halt.
             let paragraphs_cloned = paragraphs.clone();
-            *output.write().await = paragraphs;
             let typeset_text = typeset_rich_text(paragraphs_cloned, max_width).await;
-            // TODO cancel previous task when the text is updated twice in quick succession.
-            *typeset.write().await = Some(typeset_text);
+
+            let mut cancel_receiver = cancel_receiver.expect("cannot call `finish` on internal builders (so we shouldn't have a None cancel_receiver)");
+            if let Err(_) = cancel_receiver.try_recv() {
+                *output.write().await = paragraphs;
+                *typeset.write().await = Some(typeset_text);
+            }
         });
     }
 }

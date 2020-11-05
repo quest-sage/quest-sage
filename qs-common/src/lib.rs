@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod profile;
 
 #[cfg(test)]
 mod tests {

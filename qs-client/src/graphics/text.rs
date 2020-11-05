@@ -98,97 +98,110 @@ impl TextRenderer {
         text: &RichText,
         frame: &wgpu::SwapChainTexture,
         camera: &crate::graphics::Camera,
+        mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
         let text = &*text.typeset.read().await;
         if let Some(text) = text {
-            for RenderableGlyph { font, glyph, .. } in &text.glyphs {
-                self.cache.queue_glyph(*font, glyph.clone());
-            }
-
-            let queue = &self.queue;
-            let cache = &mut self.cache;
-            self.font_texture
-                .if_loaded(|font_texture| {
-                    cache
-                        .cache_queued(|rect, data| {
-                            queue.write_texture(
-                                wgpu::TextureCopyView {
-                                    texture: &font_texture.texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d {
-                                        x: rect.min.x,
-                                        y: rect.min.y,
-                                        z: 0,
-                                    },
-                                },
-                                data,
-                                wgpu::TextureDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: rect.width(),
-                                    rows_per_image: 0,
-                                },
-                                wgpu::Extent3d {
-                                    width: rect.width(),
-                                    height: rect.height(),
-                                    depth: 1,
-                                },
-                            );
-                        })
-                        .unwrap();
-                })
-                .await;
-
-            let mut items = Vec::new();
-            for RenderableGlyph {
-                font,
-                colour,
-                glyph,
-            } in &text.glyphs
             {
-                if let Some((uv_rect, pixel_rect)) = cache
-                    .rect_for(*font, glyph)
-                    .expect("Could not load cache entry for glyph")
-                {
-                    let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
-                    let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
-                    let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
-                    let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
-                    let color = (*colour).into();
-                    items.push(Renderable::Quadrilateral(
-                        Vertex {
-                            position: [x1, y1, 0.0],
-                            color,
-                            tex_coords: [u1, v1],
-                        },
-                        Vertex {
-                            position: [x2, y1, 0.0],
-                            color,
-                            tex_coords: [u2, v1],
-                        },
-                        Vertex {
-                            position: [x2, y2, 0.0],
-                            color,
-                            tex_coords: [u2, v2],
-                        },
-                        Vertex {
-                            position: [x1, y2, 0.0],
-                            color,
-                            tex_coords: [u1, v2],
-                        },
-                    ));
+                let _guard = profiler.task("queuing glyphs").time();
+                for RenderableGlyph { font, glyph, .. } in &text.glyphs {
+                    self.cache.queue_glyph(*font, glyph.clone());
                 }
             }
 
-            self.batch
-                .render(
-                    &*self.device,
-                    &*self.queue,
-                    frame,
-                    &self.font_texture,
-                    camera,
-                    items.into_iter(),
-                )
-                .await;
+            let cache = &mut self.cache;
+            {
+                let _guard = profiler.task("caching glyphs").time();
+                let queue = &self.queue;
+                self.font_texture
+                    .if_loaded(|font_texture| {
+                        cache
+                            .cache_queued(|rect, data| {
+                                queue.write_texture(
+                                    wgpu::TextureCopyView {
+                                        texture: &font_texture.texture,
+                                        mip_level: 0,
+                                        origin: wgpu::Origin3d {
+                                            x: rect.min.x,
+                                            y: rect.min.y,
+                                            z: 0,
+                                        },
+                                    },
+                                    data,
+                                    wgpu::TextureDataLayout {
+                                        offset: 0,
+                                        bytes_per_row: rect.width(),
+                                        rows_per_image: 0,
+                                    },
+                                    wgpu::Extent3d {
+                                        width: rect.width(),
+                                        height: rect.height(),
+                                        depth: 1,
+                                    },
+                                );
+                            })
+                            .unwrap();
+                    })
+                    .await;
+            }
+
+            let mut items = Vec::new();
+            {
+                let _guard = profiler.task("creating texture coordinates").time();
+                for RenderableGlyph {
+                    font,
+                    colour,
+                    glyph,
+                } in &text.glyphs
+                {
+                    if let Some((uv_rect, pixel_rect)) = cache
+                        .rect_for(*font, glyph)
+                        .expect("Could not load cache entry for glyph")
+                    {
+                        let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
+                        let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
+                        let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
+                        let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
+                        let color = (*colour).into();
+                        items.push(Renderable::Quadrilateral(
+                            Vertex {
+                                position: [x1, y1, 0.0],
+                                color,
+                                tex_coords: [u1, v1],
+                            },
+                            Vertex {
+                                position: [x2, y1, 0.0],
+                                color,
+                                tex_coords: [u2, v1],
+                            },
+                            Vertex {
+                                position: [x2, y2, 0.0],
+                                color,
+                                tex_coords: [u2, v2],
+                            },
+                            Vertex {
+                                position: [x1, y2, 0.0],
+                                color,
+                                tex_coords: [u1, v2],
+                            },
+                        ));
+                    }
+                }
+            }
+
+            {
+                let _guard = profiler.task("rendering text").time();
+                self.batch
+                    .render(
+                        &*self.device,
+                        &*self.queue,
+                        frame,
+                        &self.font_texture,
+                        camera,
+                        items.into_iter(),
+                    )
+                    .await;
+            }
         }
     }
 }
@@ -398,7 +411,7 @@ impl RichText {
     pub fn set_text(&mut self, font_family: Arc<FontFamily>) -> RichTextContentsBuilder {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if let Some(old_cancel_typeset_task) = self.cancel_typeset_task.replace(tx) {
-            old_cancel_typeset_task.send(());
+            let _ = old_cancel_typeset_task.send(());
         }
         RichTextContentsBuilder {
             output: Arc::clone(&self.paragraphs),
@@ -574,6 +587,7 @@ impl RichTextContentsBuilder {
             let typeset_text = typeset_rich_text(paragraphs_cloned, max_width).await;
 
             let mut cancel_receiver = cancel_receiver.expect("cannot call `finish` on internal builders (so we shouldn't have a None cancel_receiver)");
+            // If there is a value on this channel, we will cancel the task. So, if it is an Err value we want to continue.
             if let Err(_) = cancel_receiver.try_recv() {
                 *output.write().await = paragraphs;
                 *typeset.write().await = Some(typeset_text);

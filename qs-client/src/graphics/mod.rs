@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use wgpu::*;
 use winit::{
     event::*,
@@ -8,7 +8,8 @@ use winit::{
 };
 
 use crate::assets::{FontAssetLoader, TextureAssetLoader};
-use qs_common::assets::{AssetManager, AssetPath};
+use qs_common::{profile::ProfileSegmentGuard, assets::{AssetManager, AssetPath}};
+use qs_common::profile::InterpolatedStopwatch;
 
 mod batch;
 pub use batch::*;
@@ -20,59 +21,6 @@ mod camera;
 pub use camera::*;
 mod text;
 pub use text::*;
-
-/// An interpolated stopwatch counts the time between successive events, and calculates the average
-/// time between those events, by storing the times of the last `n` events, where `n` is some arbitrary
-/// constant specified in the stopwatch constructor.
-pub struct InterpolatedStopwatch {
-    times: Vec<Instant>,
-    offset: usize,
-    pub ticks: u64,
-}
-
-impl InterpolatedStopwatch {
-    pub fn new(interpolation_amount: usize) -> InterpolatedStopwatch {
-        let mut vec = Vec::with_capacity(interpolation_amount);
-        let now = Instant::now();
-        for _ in 0..interpolation_amount {
-            vec.push(now);
-        }
-        InterpolatedStopwatch {
-            times: vec,
-            offset: 0,
-            ticks: 0,
-        }
-    }
-
-    /// Call this function every time the given event happens.
-    /// You will be able to retrieve the average time between calls to `tick`
-    /// using the `average_time` function.
-    ///
-    /// Returns the time between the previous tick and this tick.
-    pub fn tick(&mut self) -> Duration {
-        let prev_offset = match self.offset {
-            0 => self.times.len() - 1,
-            _ => self.offset - 1,
-        };
-
-        self.times[self.offset] = Instant::now();
-        let old_time = self.times[prev_offset];
-        let time = self.times[self.offset].duration_since(old_time);
-        self.offset = (self.offset + 1) % self.times.len();
-        self.ticks += 1;
-        time
-    }
-
-    pub fn average_time(&self) -> Duration {
-        let prev_offset = match self.offset {
-            0 => self.times.len() - 1,
-            _ => self.offset - 1,
-        };
-        self.times[prev_offset]
-            .duration_since(self.times[self.offset])
-            .div_f64(self.times.len() as f64)
-    }
-}
 
 /// This struct represents the state of the whole application and contains all of the `winit`
 /// and `wgpu` data for rendering things to the screen.
@@ -333,7 +281,7 @@ impl Application {
     }
 
     /// Renders a single frame, submitting it to the swap chain.
-    pub async fn render(&mut self) {
+    pub async fn render(&mut self, mut profiler: ProfileSegmentGuard<'_>) {
         let this_frame_time = Instant::now();
         let delta_duration = this_frame_time - self.last_frame_time;
         self.last_frame_time = this_frame_time;
@@ -386,59 +334,64 @@ impl Application {
         // Send the render pass into the queue to be actually rendered.
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        // Actually render stuff here.
-        use itertools::iproduct;
-        const AMOUNT: i64 = 10;
-        const SIZE: f32 = 1.0 / AMOUNT as f32;
-        let renderables = iproduct!(-AMOUNT..AMOUNT, -AMOUNT..AMOUNT)
-            .map(|(x, y)| (x as f32 * SIZE, y as f32 * SIZE))
-            .map(|(x, y)| {
-                // `wgpu` stores texture coords with the origin in the top left, and the v axis pointing downwards.
-                Renderable::Quadrilateral(
-                    Vertex {
-                        position: [x + SIZE * -0.4, -0.4 * SIZE + y, 0.0],
-                        color: [1.0, 0.0, 0.0, 1.0],
-                        tex_coords: [0.0, 1.0],
-                    },
-                    Vertex {
-                        position: [x + SIZE * 0.4, -0.4 * SIZE + y, 0.0],
-                        color: [0.0, 1.0, 0.0, 1.0],
-                        tex_coords: [1.0, 1.0],
-                    },
-                    Vertex {
-                        position: [x + SIZE * 0.4, 0.4 * SIZE + y, 0.0],
-                        color: [0.0, 0.0, 1.0, 0.0],
-                        tex_coords: [1.0, 0.0],
-                    },
-                    Vertex {
-                        position: [x + SIZE * -0.4, 0.4 * SIZE + y, 0.0],
-                        color: [1.0, 0.0, 1.0, 0.0],
-                        tex_coords: [0.0, 0.0],
-                    },
-                )
-            });
+        {
+            let _guard = profiler.task("background").time();
+            // Actually render stuff here.
+            use itertools::iproduct;
+            const AMOUNT: i64 = 10;
+            const SIZE: f32 = 1.0 / AMOUNT as f32;
+            let renderables = iproduct!(-AMOUNT..AMOUNT, -AMOUNT..AMOUNT)
+                .map(|(x, y)| (x as f32 * SIZE, y as f32 * SIZE))
+                .map(|(x, y)| {
+                    // `wgpu` stores texture coords with the origin in the top left, and the v axis pointing downwards.
+                    Renderable::Quadrilateral(
+                        Vertex {
+                            position: [x + SIZE * -0.4, -0.4 * SIZE + y, 0.0],
+                            color: [1.0, 0.0, 0.0, 1.0],
+                            tex_coords: [0.0, 1.0],
+                        },
+                        Vertex {
+                            position: [x + SIZE * 0.4, -0.4 * SIZE + y, 0.0],
+                            color: [0.0, 1.0, 0.0, 1.0],
+                            tex_coords: [1.0, 1.0],
+                        },
+                        Vertex {
+                            position: [x + SIZE * 0.4, 0.4 * SIZE + y, 0.0],
+                            color: [0.0, 0.0, 1.0, 0.0],
+                            tex_coords: [1.0, 0.0],
+                        },
+                        Vertex {
+                            position: [x + SIZE * -0.4, 0.4 * SIZE + y, 0.0],
+                            color: [1.0, 0.0, 1.0, 0.0],
+                            tex_coords: [0.0, 0.0],
+                        },
+                    )
+                });
 
-        self.batch.render(
-            &self.device,
-            &self.queue,
-            &frame,
-            &self
-                .texture_am
-                .get(AssetPath::new(vec!["test.png".to_string()])),
-            &self.camera,
-            renderables,
-        ).await;
+            self.batch.render(
+                &self.device,
+                &self.queue,
+                &frame,
+                &self
+                    .texture_am
+                    .get(AssetPath::new(vec!["test.png".to_string()])),
+                &self.camera,
+                renderables,
+            ).await;
+        }
 
-        self.text_renderer
-            .draw_text(&self.test_text, &frame, &self.ui_camera).await;
+        {
+            let guard = profiler.task("text").time();
+            self.text_renderer
+                .draw_text(&self.test_text, &frame, &self.ui_camera, guard).await;
+        }
     }
 
     /// Executes the application.
     pub fn run(mut self, event_loop: EventLoop<()>) {
+        let mut profiler = qs_common::profile::CycleProfiler::new(25);
+
         event_loop.run(move |event, _, control_flow| {
-            // IMPORTANT:
-            // Nothing inside of this main loop may ever yield to the tokio runtime.
-            // This might cause tokio to move this event loop off the main thread, which causes some big problems.
             match event {
                 Event::WindowEvent { event, window_id } if window_id == self.window.id() => {
                     match event {
@@ -464,7 +417,17 @@ impl Application {
                 }
 
                 Event::RedrawRequested(window_id) if window_id == self.window.id() => {
-                    futures::executor::block_on(self.render());
+                    profiler.stopwatch.tick();
+                    {
+                        let mut main_segment = profiler.main_segment.time();
+                        {
+                            let render = main_segment.task("render").time();
+                            futures::executor::block_on(self.render(render));
+                        }
+                    }
+                    if profiler.main_segment.ticks % 100 == 0 {
+                        tracing::trace!("{}", profiler);
+                    }
                 }
 
                 Event::MainEventsCleared => {

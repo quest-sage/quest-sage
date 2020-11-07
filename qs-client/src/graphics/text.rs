@@ -2,8 +2,7 @@ use crate::graphics::{Batch, Renderable, Vertex};
 use qs_common::assets::{Asset, OwnedAsset};
 use rusttype::{gpu_cache::Cache, point, vector, Font, PositionedGlyph, Rect, Scale};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use wgpu::*;
 
 /// Caches rendered glyphs to speed up the rendering process of text.
@@ -100,7 +99,7 @@ impl TextRenderer {
         camera: &crate::graphics::Camera,
         mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
-        let text = &*text.typeset.read().await;
+        let text = &text.0.read().unwrap().typeset;
         if let Some(text) = text {
             {
                 let _guard = profiler.task("queuing glyphs").time();
@@ -378,50 +377,58 @@ type RichTextParagraph = Vec<RichTextSegment>;
 /// Represents text that may be styled with colours and other formatting, such as bold and italic letters.
 /// The text is assumed to live inside an infinitely tall rectangle of a given maximum width.
 /// If this rich text is being used in a label (one line of text), the list of paragraphs should contain only one element.
-pub struct RichText {
+struct RichTextContents {
     /// Represents the content of the rich text. This is broken up into paragraphs which are laid out vertically. Each paragraph
     /// may contain any number of rich text segments, which represent the contiguous indivisible segments of text that have
     /// identical formatting. In particular, rich text segments are typeset individually without regard to the rest
     /// of the paragraph or the text in general. Then, the segments are "glued together" to form the paragraph.
-    paragraphs: Arc<RwLock<Vec<RichTextParagraph>>>,
+    paragraphs: Vec<RichTextParagraph>,
 
     /// The actual typeset text. Whenever the list of paragraphs is updated, a background task should be spawned to render this text,
     /// thus assigning a value to this variable.
-    typeset: Arc<RwLock<Option<TypesetText>>>,
+    typeset: Option<TypesetText>,
 
-    /// If we're currently running a task in the background to typeset this piece of text, this contains a channel that can be
-    /// used to cancel that task. Once a value is sent through this channel, the background task will not write any values to the
-    /// `typeset` variable.
-    cancel_typeset_task: Option<tokio::sync::oneshot::Sender<()>>,
+    /// This is a counter that tracks how many times this text object has been updated. Every time `finish` is called on a builder
+    /// to set the text contents, this is incremented. Background tasks typesetting this new text will only update
+    /// the `typeset` variable if their `text_id` matches this `current_text_id`. This ensures that when we update text twice quickly,
+    /// the first task is essentially cancelled.
+    current_text_id: u64,
 
     /// Contains a value in pixels if the rich text object has a maximum width.
     max_width: Option<u32>,
 }
+pub struct RichText(Arc<RwLock<RichTextContents>>);
 
 impl RichText {
     pub fn new(max_width: Option<u32>) -> Self {
-        Self {
-            paragraphs: Arc::new(RwLock::new(Vec::new())),
-            typeset: Arc::new(RwLock::new(None)),
-            cancel_typeset_task: None,
+        Self(Arc::new(RwLock::new(RichTextContents {
+            paragraphs: Vec::new(),
+            typeset: None,
+            current_text_id: 0,
             max_width,
-        }
+        })))
     }
 
     pub fn set_text(&mut self, font_family: Arc<FontFamily>) -> RichTextContentsBuilder {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        if let Some(old_cancel_typeset_task) = self.cancel_typeset_task.replace(tx) {
-            let _ = old_cancel_typeset_task.send(());
-        }
+        let mut write = self.0.write().unwrap();
+        write.current_text_id += 1;
         RichTextContentsBuilder {
-            output: Arc::clone(&self.paragraphs),
-            typeset: Arc::clone(&self.typeset),
+            output: Self(Arc::clone(&self.0)),
             style: RichTextStyle::default(font_family),
             paragraphs: Vec::new(),
             current_paragraph: Vec::new(),
-            max_width: self.max_width,
+            max_width: write.max_width,
             is_internal: false,
-            cancel_receiver: Some(rx),
+            text_id: write.current_text_id,
+        }
+    }
+}
+
+impl RichTextContents {
+    fn write(&mut self, text_id: u64, paragraphs: Vec<RichTextParagraph>, typeset: TypesetText) {
+        if self.current_text_id == text_id {
+            self.paragraphs = paragraphs;
+            self.typeset = Some(typeset);
         }
     }
 }
@@ -431,9 +438,7 @@ impl RichText {
 #[must_use = "call the finish function to let the builder update the rich text object"]
 pub struct RichTextContentsBuilder {
     /// Where should we write the output to once this builder is finished?
-    output: Arc<RwLock<Vec<RichTextParagraph>>>,
-    /// Where should we output the typeset text to once this builder is finished?
-    typeset: Arc<RwLock<Option<TypesetText>>>,
+    output: RichText,
 
     style: RichTextStyle,
     paragraphs: Vec<RichTextParagraph>,
@@ -446,11 +451,10 @@ pub struct RichTextContentsBuilder {
     /// text, and isn't the main contents builder. If `finish` is called on an internal builder, it will panic.
     is_internal: bool,
 
-    /// If a value is received on this channel, the task will be terminated and no output will be stored.
+    /// The ID of the text we're typesetting. If this does not match the value contained within the text object, we won't produce any output.
     /// This can happen when we set the text again while we're still typesetting the old value. The typesetting task
     /// we're currently doing is therefore pointless, so it can be cancelled.
-    /// This is only None if this is an internal builder. It is Some otherwise.
-    cancel_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
+    text_id: u64,
 }
 
 impl RichTextContentsBuilder {
@@ -545,15 +549,14 @@ impl RichTextContentsBuilder {
     /// Do not call `finish` on the internal builder provided in the `styled` function.
     fn internal(mut self, style: RichTextStyle, styled: impl FnOnce(Self) -> Self) -> Self {
         let child = Self {
-            // The output and typeset fields should never be used because `finish` should never be called on this internal builder.
-            output: Arc::clone(&self.output),
-            typeset: Arc::clone(&self.typeset),
+            // The output field should never be used because `finish` should never be called on this internal builder.
+            output: RichText(Arc::clone(&self.output.0)),
             style,
             paragraphs: Vec::new(),
             current_paragraph: Vec::new(),
             max_width: self.max_width,
             is_internal: true,
-            cancel_receiver: None,
+            text_id: self.text_id,
         };
         let mut result = styled(child);
         for mut paragraph in result.paragraphs {
@@ -578,20 +581,15 @@ impl RichTextContentsBuilder {
             paragraphs.push(self.current_paragraph);
         }
         let output = self.output;
-        let typeset = self.typeset;
         let max_width = self.max_width;
-        let cancel_receiver = self.cancel_receiver.take();
+        let text_id = self.text_id;
         tokio::spawn(async move {
             // We clone the paragraph data here so that the background thread can't cause the main thread to halt.
             let paragraphs_cloned = paragraphs.clone();
             let typeset_text = typeset_rich_text(paragraphs_cloned, max_width).await;
 
-            let mut cancel_receiver = cancel_receiver.expect("cannot call `finish` on internal builders (so we shouldn't have a None cancel_receiver)");
-            // If there is a value on this channel, we will cancel the task. So, if it is an Err value we want to continue.
-            if let Err(_) = cancel_receiver.try_recv() {
-                *output.write().await = paragraphs;
-                *typeset.write().await = Some(typeset_text);
-            }
+            let mut rich_text = output.0.write().unwrap();
+            rich_text.write(text_id, paragraphs, typeset_text);
         });
     }
 }
@@ -620,9 +618,9 @@ struct FontIdSpecifier {
 
 lazy_static::lazy_static! {
     /// Maps font specifiers to the font IDs.
-    static ref FONT_ID_MAP: RwLock<HashMap<FontIdSpecifier, usize>> = RwLock::new(HashMap::new());
+    static ref FONT_ID_MAP: tokio::sync::RwLock<HashMap<FontIdSpecifier, usize>> = tokio::sync::RwLock::new(HashMap::new());
     /// A many-to-one map, mapping font IDs to the actual font asset.
-    static ref FONT_ID_TO_FONT_MAP: RwLock<HashMap<usize, Asset<Font<'static>>>> = RwLock::new(HashMap::new());
+    static ref FONT_ID_TO_FONT_MAP: tokio::sync::RwLock<HashMap<usize, Asset<Font<'static>>>> = tokio::sync::RwLock::new(HashMap::new());
 }
 
 static FONT_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);

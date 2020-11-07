@@ -806,11 +806,11 @@ struct RichTextLineTypesetResult<'a> {
 }
 
 /// Typeset a single line. Assumes that the Y coordinate of each character is zero.
-async fn typeset_rich_text_line<'a>(
-    paragraph: &'a [RichTextSegment],
+async fn typeset_rich_text_line(
+    paragraph: &[RichTextSegment],
     max_width: Option<u32>,
     scale_factor: f32,
-) -> RichTextLineTypesetResult<'a> {
+) -> RichTextLineTypesetResult<'_> {
     // The current line, which is filled with glyphs.
     let mut line = Vec::new();
     // The current word, defined as a sequence of whitespace characters followed by one or more non-whitespace characters.
@@ -851,7 +851,7 @@ async fn typeset_rich_text_line<'a>(
             )
             .await;
 
-            if let None = font_and_glyph {
+            if font_and_glyph.is_none() {
                 // Replace this glyph with a generic 'character not found' glyph.
                 font_and_glyph = get_font_for_character(
                     &*segment.style.font_family,
@@ -861,7 +861,7 @@ async fn typeset_rich_text_line<'a>(
                 )
                 .await;
 
-                if let None = font_and_glyph {
+                if font_and_glyph.is_none() {
                     // If that glyph wasn't in the font, we'll just try a normal question mark.
                     font_and_glyph = get_font_for_character(
                         &*segment.style.font_family,
@@ -871,7 +871,7 @@ async fn typeset_rich_text_line<'a>(
                     )
                     .await;
 
-                    if let None = font_and_glyph {
+                    if font_and_glyph.is_none() {
                         // Really at this point there's no alternatives left.
                         // We'll just not render this character.
                         continue;

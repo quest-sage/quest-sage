@@ -11,9 +11,9 @@ pub fn display_time(seconds: f64) -> String {
     } else if seconds >= 0.001 {
         (seconds * 1000.0, "m")
     } else if seconds >= 0.000_001 {
-        (seconds * 1000_000.0, "\u{03BC}") // micro SI prefix (Greek lowercase mu)
+        (seconds * 1_000_000.0, "\u{03BC}") // micro SI prefix (Greek lowercase mu)
     } else {
-        (seconds * 1000_000_000.0, "n")
+        (seconds * 1_000_000_000.0, "n")
     };
     format!("{:3}{}s", time as u32, time_unit)
 }
@@ -108,7 +108,7 @@ impl ProfileSegment {
         self.ticks += 1;
     }
 
-    pub fn time<'a>(&'a mut self) -> ProfileSegmentGuard<'a> {
+    pub fn time(&mut self) -> ProfileSegmentGuard<'_> {
         ProfileSegmentGuard {
             start_instant: Instant::now(),
             segment: self,

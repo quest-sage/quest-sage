@@ -75,7 +75,7 @@ impl Uniforms {
 
 /// An item that can be rendered using a `Batch`.
 /// To render items using a batch, call the `render` method on the batch.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Renderable {
     Empty,
     Triangle(Vertex, Vertex, Vertex),

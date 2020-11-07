@@ -1,6 +1,6 @@
 use crate::graphics::{Batch, Renderable, Vertex};
 use qs_common::assets::{Asset, OwnedAsset};
-use rusttype::{gpu_cache::Cache, point, vector, Font, PositionedGlyph, Rect, Scale};
+use rusttype::{gpu_cache::Cache, point, Font, PositionedGlyph, Scale};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use wgpu::*;
@@ -21,6 +21,11 @@ pub struct TextRenderer {
     cache: Cache<'static>,
     /// The texture containing pre-rendered GPU-side font glyphs.
     font_texture: OwnedAsset<crate::graphics::Texture>,
+
+    /// Sometimes when we add new elements to the cache, we need to reorder or delete previous elements.
+    /// Whenever this happens, we increment the 'generation' of the cache. Whenever the generation of the
+    /// cache does not match with cached texture coordinates in `TypesetText`, we will need to recalculate them.
+    cache_generation: u64,
 }
 
 impl TextRenderer {
@@ -89,6 +94,8 @@ impl TextRenderer {
 
             cache,
             font_texture,
+
+            cache_generation: 0,
         }
     }
 
@@ -99,8 +106,9 @@ impl TextRenderer {
         camera: &crate::graphics::Camera,
         mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
-        let text = &text.0.read().unwrap().typeset;
-        if let Some(text) = text {
+        let mut write_guard = text.0.write().unwrap();
+        let text = write_guard.typeset.as_mut();
+        if let Some(mut text) = text {
             {
                 let _guard = profiler.task("queuing glyphs").time();
                 for RenderableGlyph { font, glyph, .. } in &text.glyphs {
@@ -112,9 +120,10 @@ impl TextRenderer {
             {
                 let _guard = profiler.task("caching glyphs").time();
                 let queue = &self.queue;
+                let mut new_cache_generation = self.cache_generation;
                 self.font_texture
                     .if_loaded(|font_texture| {
-                        cache
+                        let cache_method = cache
                             .cache_queued(|rect, data| {
                                 queue.write_texture(
                                     wgpu::TextureCopyView {
@@ -140,51 +149,62 @@ impl TextRenderer {
                                 );
                             })
                             .unwrap();
+                        if let rusttype::gpu_cache::CachedBy::Reordering = cache_method {
+                            new_cache_generation += 1;
+                        }
                     })
                     .await;
+                self.cache_generation = new_cache_generation;
             }
 
             let mut items = Vec::new();
             {
                 let _guard = profiler.task("creating texture coordinates").time();
-                for RenderableGlyph {
-                    font,
-                    colour,
-                    glyph,
-                } in &text.glyphs
-                {
-                    if let Some((uv_rect, pixel_rect)) = cache
-                        .rect_for(*font, glyph)
-                        .expect("Could not load cache entry for glyph")
+                if text.cache_generation == self.cache_generation && text.cached_renderables.is_some() {
+                    items = text.cached_renderables.as_ref().unwrap().clone();
+                } else {
+                    for RenderableGlyph {
+                        font,
+                        colour,
+                        glyph,
+                    } in &text.glyphs
                     {
-                        let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
-                        let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
-                        let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
-                        let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
-                        let color = (*colour).into();
-                        items.push(Renderable::Quadrilateral(
-                            Vertex {
-                                position: [x1, y1, 0.0],
-                                color,
-                                tex_coords: [u1, v1],
-                            },
-                            Vertex {
-                                position: [x2, y1, 0.0],
-                                color,
-                                tex_coords: [u2, v1],
-                            },
-                            Vertex {
-                                position: [x2, y2, 0.0],
-                                color,
-                                tex_coords: [u2, v2],
-                            },
-                            Vertex {
-                                position: [x1, y2, 0.0],
-                                color,
-                                tex_coords: [u1, v2],
-                            },
-                        ));
+                        if let Some((uv_rect, pixel_rect)) = cache
+                            .rect_for(*font, glyph)
+                            .expect("Could not load cache entry for glyph")
+                        {
+                            let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
+                            let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
+                            let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
+                            let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
+                            let color = (*colour).into();
+                            items.push(Renderable::Quadrilateral(
+                                Vertex {
+                                    position: [x1, y1, 0.0],
+                                    color,
+                                    tex_coords: [u1, v1],
+                                },
+                                Vertex {
+                                    position: [x2, y1, 0.0],
+                                    color,
+                                    tex_coords: [u2, v1],
+                                },
+                                Vertex {
+                                    position: [x2, y2, 0.0],
+                                    color,
+                                    tex_coords: [u2, v2],
+                                },
+                                Vertex {
+                                    position: [x1, y2, 0.0],
+                                    color,
+                                    tex_coords: [u1, v2],
+                                },
+                            ));
+                        }
                     }
+
+                    text.cache_generation = self.cache_generation;
+                    text.cached_renderables = Some(items.clone());
                 }
             }
 
@@ -571,7 +591,7 @@ impl RichTextContentsBuilder {
     ///
     /// # Panics
     /// If this is an internal builder (e.g. produced by the `h1` function), this will panic.
-    pub fn finish(mut self) {
+    pub fn finish(self) {
         if self.is_internal {
             panic!("cannot call `finish` on internal builders");
         }
@@ -601,6 +621,13 @@ struct TypesetText {
 
     /// A list of glyphs together with their font IDs. New font IDs are created for each font face ID, style and size variant.
     glyphs: Vec<RenderableGlyph>,
+
+    /// When we try to render this text, we need to convert it to a list of renderables.
+    /// However, this is quite expensive, so we cache the result here.
+    cached_renderables: Option<Vec<Renderable>>,
+    /// What cache generation was the `cached_renderables` variable built for? If this does not match the `cache_generation` in
+    /// the `TextRenderer`, we will have to recalculate the cached renderables list.
+    cache_generation: u64,
 }
 
 struct RenderableGlyph {
@@ -766,6 +793,8 @@ async fn typeset_rich_text(
     TypesetText {
         size: (largest_line_width as u32, caret_y as u32),
         glyphs,
+        cached_renderables: None,
+        cache_generation: 0,
     }
 }
 

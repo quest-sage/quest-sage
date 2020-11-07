@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod graphics;
+pub mod ui;
 
 fn register_tracing_subscriber() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()

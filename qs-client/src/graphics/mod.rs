@@ -7,9 +7,15 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::assets::{FontAssetLoader, TextureAssetLoader};
-use qs_common::{profile::ProfileSegmentGuard, assets::{AssetManager, AssetPath}};
+use crate::{
+    assets::{FontAssetLoader, TextureAssetLoader},
+    ui::*,
+};
 use qs_common::profile::InterpolatedStopwatch;
+use qs_common::{
+    assets::{AssetManager, AssetPath},
+    profile::ProfileSegmentGuard,
+};
 
 mod batch;
 pub use batch::*;
@@ -368,22 +374,25 @@ impl Application {
                     )
                 });
 
-            self.batch.render(
-                &self.device,
-                &self.queue,
-                &frame,
-                &self
-                    .texture_am
-                    .get(AssetPath::new(vec!["test.png".to_string()])),
-                &self.camera,
-                renderables,
-            ).await;
+            self.batch
+                .render(
+                    &self.device,
+                    &self.queue,
+                    &frame,
+                    &self
+                        .texture_am
+                        .get(AssetPath::new(vec!["test.png".to_string()])),
+                    &self.camera,
+                    renderables,
+                )
+                .await;
         }
 
         {
             let guard = profiler.task("text").time();
             self.text_renderer
-                .draw_text(&self.test_text, &frame, &self.ui_camera, guard).await;
+                .draw_text(&self.test_text, &frame, &self.ui_camera, guard)
+                .await;
         }
     }
 

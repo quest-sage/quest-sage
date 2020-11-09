@@ -3,9 +3,11 @@ use qs_common::assets::{Asset, OwnedAsset};
 use rusttype::{gpu_cache::Cache, point, Font, PositionedGlyph, Scale};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use stretch::geometry::Size;
+use stretch::style::*;
 use wgpu::{Device, Queue, SwapChainTexture};
 
-use super::{Widget, Colour};
+use super::{Colour, UiElement};
 
 static FONT_FACE_ID_COUNTER: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(1);
@@ -157,8 +159,22 @@ impl RichText {
     }
 }
 
-impl Widget for RichText {
-    
+#[async_trait::async_trait]
+impl UiElement for RichText {
+    async fn get_size(&self) -> Size<Dimension> {
+        let read = self.0.read().unwrap();
+        if let Some(value) = &read.typeset {
+            Size {
+                width: Dimension::Points(value.size.0 as f32),
+                height: Dimension::Points(value.size.1 as f32),
+            }
+        } else {
+            Size {
+                width: Dimension::Points(0.0),
+                height: Dimension::Points(0.0),
+            }
+        }
+    }
 }
 
 /// Represents text that may be styled with colours and other formatting, such as bold and italic letters.

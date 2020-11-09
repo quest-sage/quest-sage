@@ -56,7 +56,8 @@ pub struct Application {
     batch: Batch,
     text_renderer: TextRenderer,
 
-    test_text: RichText,
+    /// A test widget.
+    widget: Widget,
 }
 
 impl Application {
@@ -232,6 +233,14 @@ impl Application {
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish();
 
+        let widget = Widget::new(test_text, Vec::new(), stretch::style::Style {
+            ..Default::default()
+        });
+        widget.layout(stretch::geometry::Size {
+            width: stretch::number::Number::Defined(512.0),
+            height: stretch::number::Number::Undefined,
+        });
+
         let mut app = Application {
             window,
 
@@ -255,7 +264,7 @@ impl Application {
             batch,
             text_renderer,
 
-            test_text,
+            widget,
         };
 
         // Call resize at the start so that we initialise cameras etc with the correct aspect ratio.
@@ -389,10 +398,11 @@ impl Application {
         }
 
         {
-            let guard = profiler.task("text").time();
-            self.text_renderer
+            let guard = profiler.task("ui").time();
+            self.widget.render(&self.batch, &self.text_renderer, &frame, &self.ui_camera, guard).await;
+            /*self.text_renderer
                 .draw_text(&self.test_text, &frame, &self.ui_camera, guard)
-                .await;
+                .await;*/
         }
     }
 

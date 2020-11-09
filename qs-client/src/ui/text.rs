@@ -132,6 +132,8 @@ impl Default for FontEmphasis {
 
 type RichTextParagraph = Vec<RichTextSegment>;
 
+/// You may clone this rich text object to get another view of it which can be safely passed between threads.
+#[derive(Clone)]
 pub struct RichText(pub Arc<RwLock<RichTextContents>>);
 
 impl RichText {
@@ -174,6 +176,10 @@ impl UiElement for RichText {
                 height: Dimension::Points(0.0),
             }
         }
+    }
+
+    fn generate_render_info(&self, layout: &stretch::result::Layout) -> crate::graphics::MultiRenderable {
+        crate::graphics::MultiRenderable::Text(self.clone())
     }
 }
 

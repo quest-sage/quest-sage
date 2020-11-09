@@ -16,6 +16,10 @@ pub trait UiElement: Send + Sync {
     /// This is allowed to be asynchronous; for example, a text asset must wait
     /// for the font to load before this can be calculated.
     async fn get_size(&self) -> Size<Dimension>;
+
+    /// Generates information about how to render this widget, based on the calculated layout info.
+    /// Asynchronous, asset-based information must be called on a background task and just used here.
+    fn generate_render_info(&self, layout: &Layout) -> MultiRenderable;
 }
 
 /// A widget is some UI element together with a list of children that can be laid out according to flexbox rules.
@@ -100,17 +104,13 @@ impl Widget {
         });
     }
 
-    /// Renders this widget using the given batch and text renderer.
-    /// This method intelligently collates the things to render so that we result in a small number of draw calls.
-    pub async fn render(
-        &self,
-        batch: &Batch,
-        text_renderer: &TextRenderer,
-        frame: &wgpu::SwapChainTexture,
-        camera: &Camera,
-        guard: qs_common::profile::ProfileSegmentGuard<'_>,
-    ) {
-
+    pub async fn generate_render_info(&self) -> MultiRenderable {
+        let read = self.0.read().await;
+        if let Some(layout) = read.layout {
+            read.element.generate_render_info(&layout)
+        } else {
+            MultiRenderable::Nothing
+        }
     }
 }
 

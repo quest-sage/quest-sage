@@ -27,6 +27,8 @@ mod camera;
 pub use camera::*;
 mod text;
 pub use text::*;
+mod multi_batch;
+pub use multi_batch::*;
 
 /// This struct represents the state of the whole application and contains all of the `winit`
 /// and `wgpu` data for rendering things to the screen.
@@ -52,9 +54,7 @@ pub struct Application {
 
     camera: Camera,
     ui_camera: Camera,
-    /// A batch for rendering many shapes in a single draw call.
-    batch: Batch,
-    text_renderer: TextRenderer,
+    multi_batch: MultiBatch,
 
     /// A test widget.
     widget: Widget,
@@ -193,6 +193,8 @@ impl Application {
             scale_factor as f32,
         );
 
+        let multi_batch = MultiBatch::new(batch, text_renderer);
+
         let mut test_text = RichText::new(Some(512));
         let test_font_family = Arc::new(FontFamily::new(vec![FontFace::new(
             "Noto Sans".to_string(),
@@ -233,9 +235,13 @@ impl Application {
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish();
 
-        let widget = Widget::new(test_text, Vec::new(), stretch::style::Style {
-            ..Default::default()
-        });
+        let widget = Widget::new(
+            test_text,
+            Vec::new(),
+            stretch::style::Style {
+                ..Default::default()
+            },
+        );
         widget.layout(stretch::geometry::Size {
             width: stretch::number::Number::Defined(512.0),
             height: stretch::number::Number::Undefined,
@@ -261,8 +267,7 @@ impl Application {
 
             camera,
             ui_camera,
-            batch,
-            text_renderer,
+            multi_batch,
 
             widget,
         };
@@ -383,7 +388,7 @@ impl Application {
                     )
                 });
 
-            self.batch
+            self.multi_batch.batch
                 .render(
                     &self.device,
                     &self.queue,
@@ -399,10 +404,7 @@ impl Application {
 
         {
             let guard = profiler.task("ui").time();
-            self.widget.render(&self.batch, &self.text_renderer, &frame, &self.ui_camera, guard).await;
-            /*self.text_renderer
-                .draw_text(&self.test_text, &frame, &self.ui_camera, guard)
-                .await;*/
+            self.multi_batch.render(self.widget.generate_render_info().await, &frame, &self.ui_camera, guard).await;
         }
     }
 

@@ -214,7 +214,7 @@ impl Batch {
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
     ) {
-        if inds.len() != 0 {
+        if !inds.is_empty() {
             if inds.len() % 2 == 1 {
                 inds.push(0); // dummy value to align the slice to a size that is a multiple of 4 bytes
             }
@@ -298,6 +298,7 @@ impl Batch {
     /// If there is insufficient capacity to store this amount of new vertices and indices, we will flush
     /// the batch's buffers so that they are free to be used.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
     fn ensure_capacity(
         &mut self,
         frame: &SwapChainTexture,

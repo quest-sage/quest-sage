@@ -54,14 +54,14 @@ pub struct Application {
     fps_counter: InterpolatedStopwatch,
 
     texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
-    font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
+    //font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
 
     camera: Camera,
     ui_camera: Camera,
     multi_batch: MultiBatch,
 
     /// A test widget.
-    test_text: RichText,
+    //test_text: RichText,
     /// The root UI widget.
     ui: Widget,
 }
@@ -189,7 +189,7 @@ impl Application {
             Arc::clone(&queue),
         ));
 
-        let mut font_am = AssetManager::new(FontAssetLoader::new());
+        let mut font_am = AssetManager::new(FontAssetLoader::default());
 
         let text_renderer = TextRenderer::new(
             Arc::clone(&device),
@@ -293,13 +293,13 @@ impl Application {
             fps_counter: InterpolatedStopwatch::new(100),
 
             texture_am,
-            font_am,
+            //font_am,
 
             camera,
             ui_camera,
             multi_batch,
 
-            test_text,
+            //test_text,
             ui,
         };
 
@@ -336,7 +336,7 @@ impl Application {
         let this_frame_time = Instant::now();
         let delta_duration = this_frame_time - self.last_frame_time;
         self.last_frame_time = this_frame_time;
-        let delta_seconds = delta_duration.as_secs_f32();
+        let _delta_seconds = delta_duration.as_secs_f32();
         self.fps_counter.tick();
 
         if self.fps_counter.ticks % 100 == 0 {
@@ -452,14 +452,16 @@ impl Application {
                     match event {
                         WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
 
-                        WindowEvent::KeyboardInput { input, .. } => match input {
-                            KeyboardInput {
+                        WindowEvent::KeyboardInput { input, .. } => {
+                            if let KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Escape),
                                 ..
-                            } => *control_flow = ControlFlow::Exit,
-                            _ => {}
-                        },
+                            } = input
+                            {
+                                *control_flow = ControlFlow::Exit;
+                            }
+                        }
 
                         WindowEvent::Resized(new_size) => self.resize(new_size, None),
                         WindowEvent::ScaleFactorChanged {

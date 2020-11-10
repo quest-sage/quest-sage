@@ -1,12 +1,11 @@
-use crate::graphics::{Batch, Camera, MultiRenderable, Renderable, Texture, Vertex};
-use qs_common::assets::{Asset, OwnedAsset};
-use rusttype::{gpu_cache::Cache, point, Font, PositionedGlyph, Scale};
+use crate::graphics::{MultiRenderable, Renderable};
+use qs_common::assets::Asset;
+use rusttype::{point, Font, PositionedGlyph, Scale};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use stretch::geometry::Size;
 use stretch::style::*;
 use tokio::task::JoinHandle;
-use wgpu::{Device, Queue, SwapChainTexture};
 
 use super::{Colour, UiElement, Widget};
 
@@ -180,7 +179,7 @@ impl UiElement for RichTextWidgetContainer {
         }
     }
 
-    fn generate_render_info(&self, layout: &stretch::result::Layout) -> MultiRenderable {
+    fn generate_render_info(&self, _layout: &stretch::result::Layout) -> MultiRenderable {
         // The rich text object itself doesn't render anything. It's just the RenderableWord children that render stuff.
         MultiRenderable::Nothing
     }
@@ -439,14 +438,6 @@ pub struct TypesetText {
     /// Therefore, this object has no control over the actual width or height of the typeset text when it is rendered; this responsibility is
     /// delegated to the UI manager.
     paragraphs: Vec<RenderableParagraph>,
-
-    /// When we try to render this text, we need to convert it to a list of renderables.
-    /// However, this is quite expensive, so we cache the result here.
-    cached_renderables: Option<Vec<Renderable>>,
-
-    /// What cache generation was the `cached_renderables` variable built for? If this does not match the `cache_generation` in
-    /// the `TextRenderer`, we will have to recalculate the cached renderables list.
-    cache_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -461,6 +452,15 @@ pub struct RenderableGlyph {
 pub struct RenderableWord {
     pub glyphs: Vec<RenderableGlyph>,
     pub size: (u32, u32),
+
+    /// When we try to render this text, we need to convert it to a list of renderables.
+    /// However, this is quite expensive, so we cache the result here.
+    /// TODO actually make this cache work
+    cached_renderables: Option<Vec<Renderable>>,
+
+    /// What cache generation was the `cached_renderables` variable built for? If this does not match the `cache_generation` in
+    /// the `TextRenderer`, we will have to recalculate the cached renderables list.
+    cache_generation: u64,
 }
 
 /// An paragraph of text comprised of a number of words.
@@ -600,8 +600,6 @@ async fn typeset_rich_text(paragraphs: Vec<RichTextParagraph>) -> TypesetText {
 
     TypesetText {
         paragraphs: renderable_paragraphs,
-        cached_renderables: None,
-        cache_generation: 0,
     }
 }
 
@@ -635,6 +633,8 @@ async fn typeset_rich_text_paragraph(
             output.push(RenderableWord {
                 glyphs: std::mem::take(&mut word),
                 size: (caret_x as u32, line_height as u32),
+                cached_renderables: None,
+                cache_generation: 0,
             });
             caret_x = 0.0;
             line_height = 0.0;
@@ -718,6 +718,8 @@ async fn typeset_rich_text_paragraph(
     output.push(RenderableWord {
         glyphs: std::mem::take(&mut word),
         size: (caret_x as u32, line_height as u32),
+        cached_renderables: None,
+        cache_generation: 0,
     });
 
     RenderableParagraph(output)

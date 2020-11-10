@@ -43,8 +43,8 @@ impl Loader<AssetPath, Texture> for TextureAssetLoader {
 /// Loads fonts from a file.
 pub struct FontAssetLoader {}
 
-impl FontAssetLoader {
-    pub fn new() -> Self {
+impl Default for FontAssetLoader {
+    fn default() -> Self {
         Self {}
     }
 }

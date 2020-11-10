@@ -39,7 +39,7 @@ impl MultiBatch {
         renderable: MultiRenderable,
         frame: &wgpu::SwapChainTexture,
         camera: &Camera,
-        profiler: qs_common::profile::ProfileSegmentGuard<'_>,
+        _profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
         let mut text_render_data: Vec<(Point<f32>, RenderableWord)> = Vec::new();
         let mut batch_render_data: Vec<Renderable> = Vec::new();
@@ -105,7 +105,7 @@ impl<'a> MultiBatchRenderState<'a> {
     async fn perform_render<'b>(&'b mut self, batch: &'b mut MultiBatch) {
         if !self.text_render_data.is_empty() {
             batch.text_renderer.draw_text(
-                &take(self.text_render_data),
+                take(self.text_render_data),
                 self.frame,
                 self.camera,
                 //profiler.task("text").time(),

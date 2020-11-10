@@ -12,12 +12,12 @@ use super::{Renderable, Vertex};
 /// Contains its own batch configured for the text rendering workflow.
 pub struct TextRenderer {
     /// `wgpu` handles so that we can dynamically update the texture.
-    device: Arc<Device>,
     queue: Arc<Queue>,
     batch: Batch,
 
     /// The UI scale factor.
-    scale_factor: f32,
+    /// TODO maybe make this some kind of global state?
+    //scale_factor: f32,
 
     /// A cache containing CPU-side rendered font glyphs.
     cache: Cache<'static>,
@@ -89,11 +89,10 @@ impl TextRenderer {
         );
 
         Self {
-            device,
             queue,
             batch,
 
-            scale_factor,
+            //scale_factor,
 
             cache,
             font_texture,
@@ -105,14 +104,14 @@ impl TextRenderer {
     /// Text is a list of words together with an offset at which to draw them.
     pub fn draw_text(
         &mut self,
-        text: &Vec<(Point<f32>, RenderableWord)>,
+        text: Vec<(Point<f32>, RenderableWord)>,
         frame: &wgpu::SwapChainTexture,
         camera: &crate::graphics::Camera,
         //mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
         {
             //let _guard = profiler.task("queuing glyphs").time();
-            for (_, word) in text {
+            for (_, word) in &text {
                 for RenderableGlyph { font, glyph, .. } in &word.glyphs {
                     self.cache.queue_glyph(*font, glyph.clone());
                 }

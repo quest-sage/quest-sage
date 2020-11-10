@@ -245,33 +245,24 @@ impl Application {
         .write("äÄöÖüÜß€")
         .end_paragraph()
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
-        .finish().await.expect("could not complete task");        
+        .finish().await.expect("could not complete task");
 
         let ui = Widget::new(
             (),
-            vec![
-                test_text.0.read().unwrap().widget.clone(),
-                Widget::new(
-                    ImageWidget {
-                        size: Size {
-                            width: Dimension::Points(100.0),
-                            height: Dimension::Points(100.0),
-                        },
-                        colour: Colour {
-                            r: 1.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.7,
-                        },
-                        texture: texture_am.get(AssetPath::new(vec!["test.png".to_string()])),
-                    },
-                    Vec::new(),
-                    Style {
-                        //align_self: stretch::style::AlignSelf::Stretch,
-                        ..Default::default()
-                    },
-                ),
-            ],
+            vec![test_text.0.read().unwrap().widget.clone()],
+            vec![Box::new(ImageWidget {
+                size: Size {
+                    width: Dimension::Points(100.0),
+                    height: Dimension::Points(100.0),
+                },
+                colour: Colour {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.7,
+                },
+                texture: texture_am.get(AssetPath::new(vec!["test.png".to_string()])),
+            })],
             Style {
                 //align_self: stretch::style::AlignSelf::Stretch,
                 //align_items: stretch::style::AlignItems::Stretch,

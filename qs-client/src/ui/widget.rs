@@ -2,7 +2,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use futures::future::{BoxFuture, FutureExt};
-use stretch::{geometry, geometry::Size, node::Node, node::Stretch, number::Number, result::Layout, style::Dimension, geometry::Point, style::Style};
+use stretch::{
+    geometry, geometry::Point, geometry::Size, node::Node, node::Stretch, number::Number,
+    result::Layout, style::Dimension, style::Style,
+};
 
 use crate::graphics::*;
 
@@ -45,14 +48,25 @@ impl Widget {
             for c in &read.children {
                 children.push_str(&c.to_debug_string().await);
             }
-            format!("{{ {} {:#?}: {} }}", read.children.len(), read.layout, children)
-        }.boxed()
+            format!(
+                "{{ {} {:#?}: {} }}",
+                read.children.len(),
+                read.layout,
+                children
+            )
+        }
+        .boxed()
     }
 }
 
 pub struct WidgetContents {
     element: Box<dyn UiElement>,
+    /// This is the list of child widgets that will be laid out inside this widget in a non-overlapping way
+    /// according to the flexbox style requirements.
     pub children: Vec<Widget>,
+    /// The list of UI elements that will be rendered on sequential layers behind this one with the exact same
+    /// layout. This is useful for creating backgrounds or highlights.
+    backgrounds: Vec<Box<dyn UiElement>>,
     layout: Option<Layout>,
     style: Style,
 }
@@ -84,19 +98,26 @@ impl Widget {
             for child in child_nodes {
                 children.push(child.generate_styles().await);
             }
-            
+
             WidgetStyle {
                 widget: self.clone(),
                 style,
                 children,
             }
-        }.boxed()
+        }
+        .boxed()
     }
 
-    pub fn new(element: impl UiElement + 'static, children: Vec<Widget>, style: Style) -> Self {
+    pub fn new(
+        element: impl UiElement + 'static,
+        children: Vec<Widget>,
+        backgrounds: Vec<Box<dyn UiElement>>,
+        style: Style,
+    ) -> Self {
         Self(Arc::new(RwLock::new(WidgetContents {
             element: Box::new(element),
             children,
+            backgrounds,
             layout: None,
             style,
         })))
@@ -116,8 +137,15 @@ impl Widget {
             let layouts: Vec<_> = {
                 let mut stretch = Stretch::new();
                 let (node, nodes) = generate_nodes(&mut stretch, &styles);
-                stretch.compute_layout(node, size).expect("could not layout");
-                nodes.into_iter().map(|(style, node)| (style, *stretch.layout(node).expect("could not get layout"))).collect()
+                stretch
+                    .compute_layout(node, size)
+                    .expect("could not layout");
+                nodes
+                    .into_iter()
+                    .map(|(style, node)| {
+                        (style, *stretch.layout(node).expect("could not get layout"))
+                    })
+                    .collect()
             };
 
             for (style, layout) in layouts {
@@ -138,17 +166,31 @@ impl Widget {
                 for child in &read.children {
                     items.push(child.generate_render_info(layout.location).await);
                 }
-                MultiRenderable::Adjacent(items)
+                let renderable = MultiRenderable::Adjacent(items);
+                if read.backgrounds.is_empty() {
+                    renderable
+                } else {
+                    let mut layers = Vec::new();
+                    for background in &read.backgrounds {
+                        layers.push(background.generate_render_info(&layout));
+                    }
+                    layers.push(renderable);
+                    MultiRenderable::Layered(layers)
+                }
             } else {
                 MultiRenderable::Nothing
             }
-        }.boxed()
+        }
+        .boxed()
     }
 }
 
 /// Returns the node corresponding to this widget, along with a vector containing all child widget styles and their nodes.
 /// This vector notably includes the current node that was returned as the first return value.
-fn generate_nodes<'a>(stretch: &mut Stretch, widget_style: &'a WidgetStyle) -> (Node, Vec<(&'a WidgetStyle, Node)>) {
+fn generate_nodes<'a>(
+    stretch: &mut Stretch,
+    widget_style: &'a WidgetStyle,
+) -> (Node, Vec<(&'a WidgetStyle, Node)>) {
     let mut children = Vec::new();
     let mut child_nodes = Vec::new();
     for child in &widget_style.children {
@@ -156,7 +198,9 @@ fn generate_nodes<'a>(stretch: &mut Stretch, widget_style: &'a WidgetStyle) -> (
         children.push(node);
         child_nodes.append(&mut new_child_nodes);
     }
-    let node = stretch.new_node(widget_style.style, children).expect("could not add node");
+    let node = stretch
+        .new_node(widget_style.style, children)
+        .expect("could not add node");
     child_nodes.push((widget_style, node));
     (node, child_nodes)
 }

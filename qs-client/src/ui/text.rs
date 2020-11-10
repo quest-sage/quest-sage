@@ -1,11 +1,11 @@
 use crate::graphics::{Batch, Camera, MultiRenderable, Renderable, Texture, Vertex};
 use qs_common::assets::{Asset, OwnedAsset};
 use rusttype::{gpu_cache::Cache, point, Font, PositionedGlyph, Scale};
-use tokio::task::JoinHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use stretch::geometry::Size;
 use stretch::style::*;
+use tokio::task::JoinHandle;
 use wgpu::{Device, Queue, SwapChainTexture};
 
 use super::{Colour, UiElement, Widget};
@@ -140,10 +140,15 @@ pub struct RichText(pub Arc<RwLock<RichTextContents>>);
 impl RichText {
     pub fn new(style: Style) -> Self {
         // This root widget contains paragraphs. The paragraphs contain words.
-        let widget = Widget::new(RichTextWidgetContainer, Vec::new(), Style {
-            flex_direction: FlexDirection::Column,
-            ..style
-        });
+        let widget = Widget::new(
+            RichTextWidgetContainer,
+            Vec::new(),
+            Vec::new(),
+            Style {
+                flex_direction: FlexDirection::Column,
+                ..style
+            },
+        );
         Self(Arc::new(RwLock::new(RichTextContents {
             paragraphs: Vec::new(),
             current_text_id: 0,
@@ -235,12 +240,20 @@ impl RichTextContents {
                         let words: Vec<_> = paragraph
                             .0
                             .into_iter()
-                            .map(|word| Widget::new(word, Vec::new(), Default::default())).collect();
-                        Widget::new(RichTextWidgetContainer, words, Style {
-                            flex_wrap: FlexWrap::Wrap,
-                            align_items: AlignItems::FlexEnd,
-                            ..Default::default()
-                        })
+                            .map(|word| {
+                                Widget::new(word, Vec::new(), Vec::new(), Default::default())
+                            })
+                            .collect();
+                        Widget::new(
+                            RichTextWidgetContainer,
+                            words,
+                            Vec::new(),
+                            Style {
+                                flex_wrap: FlexWrap::Wrap,
+                                align_items: AlignItems::FlexEnd,
+                                ..Default::default()
+                            },
+                        )
                     })
                     .collect();
             });

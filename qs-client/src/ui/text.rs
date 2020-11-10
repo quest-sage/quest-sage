@@ -238,6 +238,7 @@ impl RichTextContents {
                             .map(|word| Widget::new(word, Vec::new(), Default::default())).collect();
                         Widget::new(RichTextWidgetContainer, words, Style {
                             flex_wrap: FlexWrap::Wrap,
+                            align_items: AlignItems::FlexEnd,
                             ..Default::default()
                         })
                     })
@@ -321,6 +322,22 @@ impl RichTextContentsBuilder {
     pub fn h1(self, styled: impl FnOnce(Self) -> Self) -> Self {
         let mut style = self.style.clone();
         style.size = FontSize::H1;
+        self.internal(style, styled)
+    }
+
+    /// Apply the `h2` style to the rich text produced in this function.
+    /// Do not call `finish` on this internal builder.
+    pub fn h2(self, styled: impl FnOnce(Self) -> Self) -> Self {
+        let mut style = self.style.clone();
+        style.size = FontSize::H2;
+        self.internal(style, styled)
+    }
+
+    /// Apply the `h3` style to the rich text produced in this function.
+    /// Do not call `finish` on this internal builder.
+    pub fn h3(self, styled: impl FnOnce(Self) -> Self) -> Self {
+        let mut style = self.style.clone();
+        style.size = FontSize::H3;
         self.internal(style, styled)
     }
 

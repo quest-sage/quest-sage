@@ -177,29 +177,32 @@ impl TextRenderer {
                             .rect_for(*font, glyph)
                             .expect("Could not load cache entry for glyph")
                         {
-                            let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
-                            let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
+                            // TODO this includes the height of descenders of glyphs, which is not intended!
+                            // This displays text slightly too low!
+                            let line_height = word.size.1 as f32;
+                            let (x1, y1) = (pixel_rect.min.x as f32 + offset.x, -pixel_rect.min.y as f32 - line_height - offset.y);
+                            let (x2, y2) = (pixel_rect.max.x as f32 + offset.x, -pixel_rect.max.y as f32 - line_height - offset.y);
                             let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
                             let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
                             let color = (*colour).into();
                             items.push(Renderable::Quadrilateral(
                                 Vertex {
-                                    position: [x1 + offset.x, y1 - offset.y, 0.0],
+                                    position: [x1, y1, 0.0],
                                     color,
                                     tex_coords: [u1, v1],
                                 },
                                 Vertex {
-                                    position: [x2 + offset.x, y1 - offset.y, 0.0],
+                                    position: [x2, y1, 0.0],
                                     color,
                                     tex_coords: [u2, v1],
                                 },
                                 Vertex {
-                                    position: [x2 + offset.x, y2 - offset.y, 0.0],
+                                    position: [x2, y2, 0.0],
                                     color,
                                     tex_coords: [u2, v2],
                                 },
                                 Vertex {
-                                    position: [x1 + offset.x, y2 - offset.y, 0.0],
+                                    position: [x1, y2, 0.0],
                                     color,
                                     tex_coords: [u1, v2],
                                 },

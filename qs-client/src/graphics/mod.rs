@@ -213,11 +213,17 @@ impl Application {
                 )
             )
         )
+        .end_paragraph()
         .write("Hello, ")
         .italic(|b| b
             .write("world")
         )
         .write("!")
+        .end_paragraph()
+        .h1(|b| b.write("aag"))
+        .h2(|b| b.write("aag"))
+        .h3(|b| b.write("aag"))
+        .write("aag")
         .end_paragraph()
         .write("Regular ")
         .italic(|b| b

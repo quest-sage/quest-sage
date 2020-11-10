@@ -2,8 +2,11 @@ use crate::graphics::Batch;
 use crate::ui::*;
 use qs_common::assets::OwnedAsset;
 use rusttype::gpu_cache::Cache;
+use stretch::geometry::Point;
 use std::sync::Arc;
 use wgpu::*;
+
+use super::{Renderable, Vertex};
 
 /// Caches rendered glyphs to speed up the rendering process of text.
 /// Contains a font used to render this text.
@@ -99,26 +102,126 @@ impl TextRenderer {
         }
     }
 
+    /// Text is a list of words together with an offset at which to draw them.
     pub async fn draw_text(
         &mut self,
-        text: &RichText,
+        text: &Vec<(Point<f32>, RenderableWord)>,
         frame: &wgpu::SwapChainTexture,
         camera: &crate::graphics::Camera,
-        profiler: qs_common::profile::ProfileSegmentGuard<'_>,
+        mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
-        let mut write = text.0.write().unwrap();
-        if let Some(text) = &mut write.typeset {
-            self.cache_generation = text
+        {
+            let _guard = profiler.task("queuing glyphs").time();
+            for (_, word) in text {
+                for RenderableGlyph { font, glyph, .. } in &word.glyphs {
+                    self.cache.queue_glyph(*font, glyph.clone());
+                }
+            }
+        }
+
+        {
+            let _guard = profiler.task("caching glyphs").time();
+            let cache = &mut self.cache;
+            let queue = &self.queue;
+            let mut cache_generation = self.cache_generation;
+            self.font_texture
+                .if_loaded(|font_texture| {
+                    let cache_method = cache
+                        .cache_queued(|rect, data| {
+                            queue.write_texture(
+                                wgpu::TextureCopyView {
+                                    texture: &font_texture.texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d {
+                                        x: rect.min.x,
+                                        y: rect.min.y,
+                                        z: 0,
+                                    },
+                                },
+                                data,
+                                wgpu::TextureDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: rect.width(),
+                                    rows_per_image: 0,
+                                },
+                                wgpu::Extent3d {
+                                    width: rect.width(),
+                                    height: rect.height(),
+                                    depth: 1,
+                                },
+                            );
+                        })
+                        .unwrap();
+                    if let rusttype::gpu_cache::CachedBy::Reordering = cache_method {
+                        cache_generation += 1;
+                    }
+                })
+                .await;
+            self.cache_generation = cache_generation;
+        }
+
+        let mut items = Vec::new();
+        {
+            let _guard = profiler.task("creating texture coordinates").time();
+            /*if self.cache_generation == cache_generation && self.cached_renderables.is_some() {
+                items = self.cached_renderables.as_ref().unwrap().clone();
+            } else */{
+                for (offset, word) in text {
+                    for RenderableGlyph {
+                        font,
+                        colour,
+                        glyph,
+                    } in &word.glyphs
+                    {
+                        if let Some((uv_rect, pixel_rect)) = self.cache
+                            .rect_for(*font, glyph)
+                            .expect("Could not load cache entry for glyph")
+                        {
+                            let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
+                            let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
+                            let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
+                            let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
+                            let color = (*colour).into();
+                            items.push(Renderable::Quadrilateral(
+                                Vertex {
+                                    position: [x1 + offset.x, y1 - offset.y, 0.0],
+                                    color,
+                                    tex_coords: [u1, v1],
+                                },
+                                Vertex {
+                                    position: [x2 + offset.x, y1 - offset.y, 0.0],
+                                    color,
+                                    tex_coords: [u2, v1],
+                                },
+                                Vertex {
+                                    position: [x2 + offset.x, y2 - offset.y, 0.0],
+                                    color,
+                                    tex_coords: [u2, v2],
+                                },
+                                Vertex {
+                                    position: [x1 + offset.x, y2 - offset.y, 0.0],
+                                    color,
+                                    tex_coords: [u1, v2],
+                                },
+                            ));
+                        }
+                    }
+                }
+
+                //word.cached_renderables = Some(items.clone());
+            }
+        }
+
+        {
+            let _guard = profiler.task("rendering text").time();
+            self.batch
                 .render(
-                    profiler,
                     &*self.device,
                     &*self.queue,
                     frame,
-                    &mut self.cache,
-                    &mut self.batch,
                     &self.font_texture,
                     camera,
-                    self.cache_generation,
+                    items.into_iter(),
                 )
                 .await;
         }

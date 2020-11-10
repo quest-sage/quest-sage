@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
+use stretch::geometry::Point;
 use wgpu::*;
 use winit::{
     event::*,
@@ -57,7 +58,7 @@ pub struct Application {
     multi_batch: MultiBatch,
 
     /// A test widget.
-    widget: Widget,
+    test_text: RichText,
 }
 
 impl Application {
@@ -195,7 +196,7 @@ impl Application {
 
         let multi_batch = MultiBatch::new(batch, text_renderer);
 
-        let mut test_text = RichText::new(Some(512));
+        let mut test_text = RichText::new(Default::default());
         let test_font_family = Arc::new(FontFamily::new(vec![FontFace::new(
             "Noto Sans".to_string(),
             font_am.get(AssetPath::new(vec!["NotoSans-Regular.ttf".to_string()])),
@@ -212,7 +213,6 @@ impl Application {
                 )
             )
         )
-        .end_paragraph()
         .write("Hello, ")
         .italic(|b| b
             .write("world")
@@ -233,19 +233,17 @@ impl Application {
         .write("äÄöÖüÜß€")
         .end_paragraph()
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
-        .finish();
+        .finish().await.expect("could not complete task");
 
-        let widget = Widget::new(
-            test_text,
-            Vec::new(),
-            stretch::style::Style {
-                ..Default::default()
-            },
-        );
-        widget.layout(stretch::geometry::Size {
-            width: stretch::number::Number::Defined(512.0),
-            height: stretch::number::Number::Undefined,
-        });
+        test_text
+            .0
+            .read()
+            .unwrap()
+            .widget
+            .layout(stretch::geometry::Size {
+                width: stretch::number::Number::Defined(800.0),
+                height: stretch::number::Number::Undefined,
+            });
 
         let mut app = Application {
             window,
@@ -269,7 +267,7 @@ impl Application {
             ui_camera,
             multi_batch,
 
-            widget,
+            test_text,
         };
 
         // Call resize at the start so that we initialise cameras etc with the correct aspect ratio.
@@ -388,7 +386,8 @@ impl Application {
                     )
                 });
 
-            self.multi_batch.batch
+            self.multi_batch
+                .batch
                 .render(
                     &self.device,
                     &self.queue,
@@ -404,7 +403,20 @@ impl Application {
 
         {
             let guard = profiler.task("ui").time();
-            self.multi_batch.render(self.widget.generate_render_info().await, &frame, &self.ui_camera, guard).await;
+            self.multi_batch
+                .render(
+                    self.test_text
+                        .0
+                        .read()
+                        .unwrap()
+                        .widget
+                        .generate_render_info(Point { x: 0.0, y: 0.0 })
+                        .await,
+                    &frame,
+                    &self.ui_camera,
+                    guard,
+                )
+                .await;
         }
     }
 

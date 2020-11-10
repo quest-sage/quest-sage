@@ -1,4 +1,6 @@
 use crate::graphics::*;
+use futures::future::{BoxFuture, FutureExt};
+use stretch::geometry::Point;
 
 /// A `MultiBatch` renders layers of content by sending data to multiple batches
 /// to be rendered with the fewest possible draw calls (within reasonable computational complexity).
@@ -25,14 +27,27 @@ impl MultiBatch {
         camera: &Camera,
         mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
-        match renderable {
-            MultiRenderable::Nothing => {}
-            MultiRenderable::Layered(layers) => { unimplemented!() }
-            MultiRenderable::Adjacent(items) => { unimplemented!() }
-            MultiRenderable::Text(text) => {
-                self.text_renderer.draw_text(&text, frame, camera, profiler.task("text").time()).await;
+        let render_data = self.generate_render_data(renderable).await;
+        self.text_renderer.draw_text(&render_data, frame, camera, profiler.task("text").time()).await;
+    }
+
+    fn generate_render_data(&self, renderable: MultiRenderable) -> BoxFuture<Vec<(Point<f32>, RenderableWord)>> {
+        async move {
+            match renderable {
+                MultiRenderable::Nothing => Vec::new(),
+                MultiRenderable::Layered(layers) => { unimplemented!() }
+                MultiRenderable::Adjacent(items) => {
+                    let mut text = Vec::new();
+                    for item in items {
+                        text.append(&mut self.generate_render_data(item).await);
+                    }
+                    text
+                }
+                MultiRenderable::Text { word, offset } => {
+                    vec![ (offset, word) ]
+                }
             }
-        }
+        }.boxed()
     }
 }
 
@@ -54,5 +69,8 @@ pub enum MultiRenderable {
     Adjacent(Vec<MultiRenderable>),
 
     /// Render some text using the text render batch.
-    Text(RichText),
+    Text {
+        word: RenderableWord,
+        offset: Point<f32>,
+    },
 }

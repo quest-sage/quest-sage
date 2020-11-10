@@ -1,13 +1,14 @@
-use crate::graphics::{Batch, Camera, Renderable, Texture, Vertex};
+use crate::graphics::{Batch, Camera, MultiRenderable, Renderable, Texture, Vertex};
 use qs_common::assets::{Asset, OwnedAsset};
 use rusttype::{gpu_cache::Cache, point, Font, PositionedGlyph, Scale};
+use tokio::task::JoinHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use stretch::geometry::Size;
 use stretch::style::*;
 use wgpu::{Device, Queue, SwapChainTexture};
 
-use super::{Colour, UiElement};
+use super::{Colour, UiElement, Widget};
 
 static FONT_FACE_ID_COUNTER: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(1);
@@ -137,12 +138,16 @@ type RichTextParagraph = Vec<RichTextSegment>;
 pub struct RichText(pub Arc<RwLock<RichTextContents>>);
 
 impl RichText {
-    pub fn new(max_width: Option<u32>) -> Self {
+    pub fn new(style: Style) -> Self {
+        // This root widget contains paragraphs. The paragraphs contain words.
+        let widget = Widget::new(RichTextWidgetContainer, Vec::new(), Style {
+            flex_direction: FlexDirection::Column,
+            ..style
+        });
         Self(Arc::new(RwLock::new(RichTextContents {
             paragraphs: Vec::new(),
-            typeset: None,
             current_text_id: 0,
-            max_width,
+            widget,
         })))
     }
 
@@ -154,32 +159,41 @@ impl RichText {
             style: RichTextStyle::default(font_family),
             paragraphs: Vec::new(),
             current_paragraph: Vec::new(),
-            max_width: write.max_width,
             is_internal: false,
             text_id: write.current_text_id,
         }
     }
 }
 
-#[async_trait::async_trait]
-impl UiElement for RichText {
-    async fn get_size(&self) -> Size<Dimension> {
-        let read = self.0.read().unwrap();
-        if let Some(value) = &read.typeset {
-            Size {
-                width: Dimension::Points(value.size.0 as f32),
-                height: Dimension::Points(value.size.1 as f32),
-            }
-        } else {
-            Size {
-                width: Dimension::Points(0.0),
-                height: Dimension::Points(0.0),
-            }
+/// This struct is essentially a box into which we can put RenderableWord objects.
+struct RichTextWidgetContainer;
+impl UiElement for RichTextWidgetContainer {
+    fn get_size(&self) -> Size<Dimension> {
+        Size {
+            width: Dimension::Auto,
+            height: Dimension::Auto,
         }
     }
 
-    fn generate_render_info(&self, layout: &stretch::result::Layout) -> crate::graphics::MultiRenderable {
-        crate::graphics::MultiRenderable::Text(self.clone())
+    fn generate_render_info(&self, layout: &stretch::result::Layout) -> MultiRenderable {
+        // The rich text object itself doesn't render anything. It's just the RenderableWord children that render stuff.
+        MultiRenderable::Nothing
+    }
+}
+
+impl UiElement for RenderableWord {
+    fn get_size(&self) -> Size<Dimension> {
+        Size {
+            width: Dimension::Points(self.size.0 as f32),
+            height: Dimension::Points(self.size.1 as f32),
+        }
+    }
+
+    fn generate_render_info(&self, layout: &stretch::result::Layout) -> MultiRenderable {
+        MultiRenderable::Text {
+            word: self.clone(),
+            offset: layout.location,
+        }
     }
 }
 
@@ -193,25 +207,42 @@ pub struct RichTextContents {
     /// of the paragraph or the text in general. Then, the segments are "glued together" to form the paragraph.
     paragraphs: Vec<RichTextParagraph>,
 
-    /// The actual typeset text. Whenever the list of paragraphs is updated, a background task should be spawned to render this text,
-    /// thus assigning a value to this variable.
-    pub typeset: Option<TypesetText>,
+    /// The widget representing the actual typeset rich text.
+    /// The root element is a RichTextWidgetContainer, containing some RenderableWord children.
+    /// Whenever the list of paragraphs is updated, a background task is spawned to render this text.
+    pub widget: Widget,
 
     /// This is a counter that tracks how many times this text object has been updated. Every time `finish` is called on a builder
     /// to set the text contents, this is incremented. Background tasks typesetting this new text will only update
     /// the `typeset` variable if their `text_id` matches this `current_text_id`. This ensures that when we update text twice quickly,
     /// the first task is essentially cancelled.
     current_text_id: u64,
-
-    /// Contains a value in pixels if the rich text object has a maximum width.
-    max_width: Option<u32>,
 }
 
 impl RichTextContents {
     fn write(&mut self, text_id: u64, paragraphs: Vec<RichTextParagraph>, typeset: TypesetText) {
         if self.current_text_id == text_id {
             self.paragraphs = paragraphs;
-            self.typeset = Some(typeset);
+            // TODO invalidate hierarchy, force re-layout
+            let cloned = self.widget.clone();
+            tokio::task::spawn(async move {
+                // Construct the widget hierarchy.
+                let mut write = cloned.0.write().await;
+                write.children = typeset
+                    .paragraphs
+                    .into_iter()
+                    .map(|paragraph| {
+                        let words: Vec<_> = paragraph
+                            .0
+                            .into_iter()
+                            .map(|word| Widget::new(word, Vec::new(), Default::default())).collect();
+                        Widget::new(RichTextWidgetContainer, words, Style {
+                            flex_wrap: FlexWrap::Wrap,
+                            ..Default::default()
+                        })
+                    })
+                    .collect();
+            });
         }
     }
 }
@@ -226,9 +257,6 @@ pub struct RichTextContentsBuilder {
     style: RichTextStyle,
     paragraphs: Vec<RichTextParagraph>,
     current_paragraph: RichTextParagraph,
-
-    /// Contains a value in pixels if the rich text object has a maximum width.
-    max_width: Option<u32>,
 
     /// True if this builder is an "internal" builder, i.e. if it's being used to style some subset of the
     /// text, and isn't the main contents builder. If `finish` is called on an internal builder, it will panic.
@@ -337,7 +365,6 @@ impl RichTextContentsBuilder {
             style,
             paragraphs: Vec::new(),
             current_paragraph: Vec::new(),
-            max_width: self.max_width,
             is_internal: true,
             text_id: self.text_id,
         };
@@ -354,7 +381,7 @@ impl RichTextContentsBuilder {
     ///
     /// # Panics
     /// If this is an internal builder (e.g. produced by the `h1` function), this will panic.
-    pub fn finish(self) {
+    pub fn finish(self) -> JoinHandle<()> {
         if self.is_internal {
             panic!("cannot call `finish` on internal builders");
         }
@@ -364,168 +391,50 @@ impl RichTextContentsBuilder {
             paragraphs.push(self.current_paragraph);
         }
         let output = self.output;
-        let max_width = self.max_width;
         let text_id = self.text_id;
         tokio::spawn(async move {
             // We clone the paragraph data here so that the background thread can't cause the main thread to halt.
             let paragraphs_cloned = paragraphs.clone();
-            let typeset_text = typeset_rich_text(paragraphs_cloned, max_width).await;
+            let typeset_text = typeset_rich_text(paragraphs_cloned).await;
 
             let mut rich_text = output.0.write().unwrap();
             rich_text.write(text_id, paragraphs, typeset_text);
-        });
+        })
     }
 }
 
 pub struct TypesetText {
-    /// The area of pixels required to draw this text in the x and y directions.
-    /// The pixel glyphs will never extend past this area.
-    size: (u32, u32),
-
-    /// A list of glyphs together with their font IDs. New font IDs are created for each font face ID, style and size variant.
-    glyphs: Vec<RenderableGlyph>,
+    /// A list of words, containing glyphs together with their font IDs. New font IDs are created for each font face ID, style and size variant.
+    /// Each word is assumed to start at position (0, 0). The actual positions of each word are determined by the container the text is placed in.
+    /// Therefore, this object has no control over the actual width or height of the typeset text when it is rendered; this responsibility is
+    /// delegated to the UI manager.
+    paragraphs: Vec<RenderableParagraph>,
 
     /// When we try to render this text, we need to convert it to a list of renderables.
     /// However, this is quite expensive, so we cache the result here.
     cached_renderables: Option<Vec<Renderable>>,
+
     /// What cache generation was the `cached_renderables` variable built for? If this does not match the `cache_generation` in
     /// the `TextRenderer`, we will have to recalculate the cached renderables list.
     cache_generation: u64,
 }
 
-impl TypesetText {
-    /// Renders the given text using the provided cache, batch etc.
-    /// Returns the new cache generation, if a new one was created.
-    pub async fn render(
-        &mut self,
-        mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
-        device: &Device,
-        queue: &Queue,
-        frame: &SwapChainTexture,
-        cache: &mut Cache<'_>,
-        batch: &mut Batch,
-        font_texture: &OwnedAsset<Texture>,
-        camera: &Camera,
-        mut cache_generation: u64,
-    ) -> u64 {
-        {
-            let _guard = profiler.task("queuing glyphs").time();
-            for RenderableGlyph { font, glyph, .. } in &self.glyphs {
-                cache.queue_glyph(*font, glyph.clone());
-            }
-        }
-
-        {
-            let _guard = profiler.task("caching glyphs").time();
-            font_texture
-                .if_loaded(|font_texture| {
-                    let cache_method = cache
-                        .cache_queued(|rect, data| {
-                            queue.write_texture(
-                                wgpu::TextureCopyView {
-                                    texture: &font_texture.texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d {
-                                        x: rect.min.x,
-                                        y: rect.min.y,
-                                        z: 0,
-                                    },
-                                },
-                                data,
-                                wgpu::TextureDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: rect.width(),
-                                    rows_per_image: 0,
-                                },
-                                wgpu::Extent3d {
-                                    width: rect.width(),
-                                    height: rect.height(),
-                                    depth: 1,
-                                },
-                            );
-                        })
-                        .unwrap();
-                    if let rusttype::gpu_cache::CachedBy::Reordering = cache_method {
-                        cache_generation += 1;
-                    }
-                })
-                .await;
-        }
-
-        let mut items = Vec::new();
-        {
-            let _guard = profiler.task("creating texture coordinates").time();
-            if self.cache_generation == cache_generation && self.cached_renderables.is_some() {
-                items = self.cached_renderables.as_ref().unwrap().clone();
-            } else {
-                for RenderableGlyph {
-                    font,
-                    colour,
-                    glyph,
-                } in &self.glyphs
-                {
-                    if let Some((uv_rect, pixel_rect)) = cache
-                        .rect_for(*font, glyph)
-                        .expect("Could not load cache entry for glyph")
-                    {
-                        let (x1, y1) = (pixel_rect.min.x as f32, -pixel_rect.min.y as f32);
-                        let (x2, y2) = (pixel_rect.max.x as f32, -pixel_rect.max.y as f32);
-                        let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
-                        let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
-                        let color = (*colour).into();
-                        items.push(Renderable::Quadrilateral(
-                            Vertex {
-                                position: [x1, y1, 0.0],
-                                color,
-                                tex_coords: [u1, v1],
-                            },
-                            Vertex {
-                                position: [x2, y1, 0.0],
-                                color,
-                                tex_coords: [u2, v1],
-                            },
-                            Vertex {
-                                position: [x2, y2, 0.0],
-                                color,
-                                tex_coords: [u2, v2],
-                            },
-                            Vertex {
-                                position: [x1, y2, 0.0],
-                                color,
-                                tex_coords: [u1, v2],
-                            },
-                        ));
-                    }
-                }
-
-                self.cache_generation = cache_generation;
-                self.cached_renderables = Some(items.clone());
-            }
-        }
-
-        {
-            let _guard = profiler.task("rendering text").time();
-            batch
-                .render(
-                    &*device,
-                    &*queue,
-                    frame,
-                    &font_texture,
-                    camera,
-                    items.into_iter(),
-                )
-                .await;
-        }
-
-        cache_generation
-    }
+#[derive(Debug, Clone)]
+pub struct RenderableGlyph {
+    pub font: usize,
+    pub colour: Colour,
+    pub glyph: PositionedGlyph<'static>,
 }
 
-struct RenderableGlyph {
-    font: usize,
-    colour: Colour,
-    glyph: PositionedGlyph<'static>,
+/// An indivisible unit of text, represented as a list of glyphs positioned relative to the word's origin point.
+#[derive(Debug, Clone)]
+pub struct RenderableWord {
+    pub glyphs: Vec<RenderableGlyph>,
+    pub size: (u32, u32),
 }
+
+/// An paragraph of text comprised of a number of words.
+pub struct RenderableParagraph(pub Vec<RenderableWord>);
 
 #[derive(PartialEq, Eq, Hash)]
 struct FontIdSpecifier {
@@ -650,76 +559,40 @@ async fn get_font_for_character(
     None
 }
 
-async fn typeset_rich_text(
-    paragraphs: Vec<RichTextParagraph>,
-    max_width: Option<u32>,
-) -> TypesetText {
+async fn typeset_rich_text(paragraphs: Vec<RichTextParagraph>) -> TypesetText {
     let scale_factor = 1.0;
 
-    let mut largest_line_width = 0.0;
-    let mut caret_y = 0.0;
-    let mut glyphs = Vec::new();
+    let mut renderable_paragraphs = Vec::new();
     for paragraph in paragraphs {
-        let mut segments: &[RichTextSegment] = &paragraph;
-        while !segments.is_empty() {
-            let mut line_result = typeset_rich_text_line(segments, max_width, scale_factor).await;
-            tracing::trace!(
-                "Rendering line of {} segments: {} excess",
-                segments.len(),
-                line_result.excess.len()
-            );
-            segments = line_result.excess;
-
-            caret_y += line_result.line_height;
-            if line_result.line_width > largest_line_width {
-                largest_line_width = line_result.line_width;
-            }
-            for RenderableGlyph { glyph, .. } in &mut line_result.line {
-                glyph.set_position(point(glyph.position().x, caret_y))
-            }
-            glyphs.append(&mut line_result.line);
-        }
+        let line_result = typeset_rich_text_paragraph(paragraph, scale_factor).await;
+        renderable_paragraphs.push(line_result);
     }
 
     TypesetText {
-        size: (largest_line_width as u32, caret_y as u32),
-        glyphs,
+        paragraphs: renderable_paragraphs,
         cached_renderables: None,
         cache_generation: 0,
     }
 }
 
-struct RichTextLineTypesetResult<'a> {
-    line: Vec<RenderableGlyph>,
-    line_width: f32,
-    line_height: f32,
-    excess: &'a [RichTextSegment],
-}
-
-/// Typeset a single line. Assumes that the Y coordinate of each character is zero.
-async fn typeset_rich_text_line(
-    paragraph: &[RichTextSegment],
-    max_width: Option<u32>,
+/// Typeset a single paragraph. Assumes that the Y coordinate of each character is zero.
+async fn typeset_rich_text_paragraph(
+    paragraph: Vec<RichTextSegment>,
     scale_factor: f32,
-) -> RichTextLineTypesetResult<'_> {
-    // The current line, which is filled with glyphs.
-    let mut line = Vec::new();
+) -> RenderableParagraph {
+    // The current paragraph, which is filled with words.
+    let mut output = Vec::new();
     // The current word, defined as a sequence of whitespace characters followed by one or more non-whitespace characters.
     let mut word = Vec::new();
-    // The segment index of the start of the current word. This is where we backtrack to if a word could not be added to this line.
-    let mut word_start_index = 0;
 
-    // The current X position on the line.
+    // The current X position on the word.
     let mut caret_x = 0.0;
     let mut line_height = 0.0;
 
     // Contains the last glyph's font ID and glyph ID, if there was a previous glyph on this line.
     let mut last_glyph = None;
 
-    let mut segment_index = 0;
-    while segment_index < paragraph.len() {
-        let segment = &paragraph[segment_index];
-
+    for segment in paragraph {
         let scale = match segment.style.size {
             FontSize::H1 => Scale::uniform(72.0 * scale_factor),
             FontSize::H2 => Scale::uniform(48.0 * scale_factor),
@@ -728,9 +601,13 @@ async fn typeset_rich_text_line(
         };
 
         if !segment.glue_to_previous {
-            // Add the previous word to the line, as we now know it completely fits.
-            line.append(&mut word);
-            word_start_index = segment_index;
+            // Add the previous word to the paragraph.
+            output.push(RenderableWord {
+                glyphs: std::mem::take(&mut word),
+                size: (caret_x as u32, line_height as u32),
+            });
+            caret_x = 0.0;
+            line_height = 0.0;
         }
 
         for c in segment.text.chars() {
@@ -793,21 +670,6 @@ async fn typeset_rich_text_line(
             last_glyph = Some((font, base_glyph.id()));
             let glyph = base_glyph.scaled(scale).positioned(point(caret_x, 0.0));
 
-            if let Some(max_width) = max_width {
-                if let Some(bb) = glyph.pixel_bounding_box() {
-                    if bb.max.x >= max_width as i32 {
-                        // We've exceeded the width of the line.
-                        // So, we won't submit the current word, and we'll just return here.
-                        return RichTextLineTypesetResult {
-                            line,
-                            line_height,
-                            line_width: caret_x,
-                            excess: &paragraph[word_start_index..],
-                        };
-                    }
-                }
-            }
-
             caret_x += glyph.unpositioned().h_metrics().advance_width;
             let v_metrics = glyph.unpositioned().font().v_metrics(scale);
             let glyph_line_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
@@ -820,16 +682,13 @@ async fn typeset_rich_text_line(
                 glyph,
             });
         }
-
-        segment_index += 1;
     }
 
     // Add the current word to the line.
-    line.append(&mut word);
-    RichTextLineTypesetResult {
-        line,
-        line_height,
-        line_width: caret_x,
-        excess: &[],
-    }
+    output.push(RenderableWord {
+        glyphs: std::mem::take(&mut word),
+        size: (caret_x as u32, line_height as u32),
+    });
+
+    RenderableParagraph(output)
 }

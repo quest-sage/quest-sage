@@ -2,20 +2,16 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use futures::future::{BoxFuture, FutureExt};
-use stretch::{
-    geometry, geometry::Size, node::Node, node::Stretch, number::Number, result::Layout,
-    style::Dimension, style::Style,
-};
+use stretch::{geometry, geometry::Size, node::Node, node::Stretch, number::Number, result::Layout, style::Dimension, geometry::Point, style::Style};
 
 use crate::graphics::*;
 
 /// A UI element is an item in a UI that has a size and can be rendered.
-#[async_trait::async_trait]
 pub trait UiElement: Send + Sync {
     /// When laying out this UI element inside a widget, what should its size be?
     /// This is allowed to be asynchronous; for example, a text asset must wait
     /// for the font to load before this can be calculated.
-    async fn get_size(&self) -> Size<Dimension>;
+    fn get_size(&self) -> Size<Dimension>;
 
     /// Generates information about how to render this widget, based on the calculated layout info.
     /// Asynchronous, asset-based information must be called on a background task and just used here.
@@ -25,11 +21,25 @@ pub trait UiElement: Send + Sync {
 /// A widget is some UI element together with a list of children that can be laid out according to flexbox rules.
 /// You can clone the widget to get another reference to the same widget.
 #[derive(Clone)]
-pub struct Widget(Arc<RwLock<WidgetContents>>);
+pub struct Widget(pub Arc<RwLock<WidgetContents>>);
 
-struct WidgetContents {
+impl Widget {
+    /// TODO remove this, just for debugging
+    pub fn to_debug_string(&self) -> BoxFuture<String> {
+        async move {
+            let read = self.0.read().await;
+            let mut children = String::new();
+            for c in &read.children {
+                children.push_str(&c.to_debug_string().await);
+            }
+            format!("{{ {} {:#?}: {} }}", read.children.len(), read.layout, children)
+        }.boxed()
+    }
+}
+
+pub struct WidgetContents {
     element: Box<dyn UiElement>,
-    children: Vec<Widget>,
+    pub children: Vec<Widget>,
     layout: Option<Layout>,
     style: Style,
 }
@@ -42,9 +52,9 @@ struct WidgetStyle {
 }
 
 impl WidgetContents {
-    async fn get_style(&self) -> Style {
+    fn get_style(&self) -> Style {
         Style {
-            size: self.element.get_size().await,
+            size: self.element.get_size(),
             ..self.style
         }
     }
@@ -56,7 +66,7 @@ impl Widget {
     fn generate_styles(&self) -> BoxFuture<WidgetStyle> {
         async move {
             let mut children = Vec::new();
-            let style = self.0.read().await.get_style().await;
+            let style = self.0.read().await.get_style();
             let child_nodes = self.0.read().await.children.clone();
             for child in child_nodes {
                 children.push(child.generate_styles().await);
@@ -98,19 +108,28 @@ impl Widget {
             };
 
             for (style, layout) in layouts {
-                style.widget.0.write().await.layout = Some(layout);
-                // TODO let the widget respond to this layout change.
+                let mut write = style.widget.0.write().await;
+                write.layout = Some(layout);
             }
         });
     }
 
-    pub async fn generate_render_info(&self) -> MultiRenderable {
-        let read = self.0.read().await;
-        if let Some(layout) = read.layout {
-            read.element.generate_render_info(&layout)
-        } else {
-            MultiRenderable::Nothing
-        }
+    pub fn generate_render_info(&self, offset: Point<f32>) -> BoxFuture<MultiRenderable> {
+        async move {
+            let read = self.0.read().await;
+            if let Some(mut layout) = read.layout {
+                let mut items = Vec::new();
+                layout.location.x += offset.x;
+                layout.location.y += offset.y;
+                items.push(read.element.generate_render_info(&layout));
+                for child in &read.children {
+                    items.push(child.generate_render_info(layout.location).await);
+                }
+                MultiRenderable::Adjacent(items)
+            } else {
+                MultiRenderable::Nothing
+            }
+        }.boxed()
     }
 }
 

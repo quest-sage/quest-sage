@@ -18,6 +18,19 @@ pub trait UiElement: Send + Sync {
     fn generate_render_info(&self, layout: &Layout) -> MultiRenderable;
 }
 
+impl UiElement for () {
+    fn get_size(&self) -> Size<Dimension> {
+        Size {
+            width: Dimension::Auto,
+            height: Dimension::Auto,
+        }
+    }
+
+    fn generate_render_info(&self, _layout: &Layout) -> MultiRenderable {
+        MultiRenderable::Nothing
+    }
+}
+
 /// A widget is some UI element together with a list of children that can be laid out according to flexbox rules.
 /// You can clone the widget to get another reference to the same widget.
 #[derive(Clone)]

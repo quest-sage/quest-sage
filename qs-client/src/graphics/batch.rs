@@ -1,6 +1,6 @@
+use std::sync::Arc;
+
 use crate::graphics::Texture;
-use qs_common::assets::Asset;
-use qs_common::assets::LoadStatus;
 use wgpu::*;
 
 /// The maximum anout of vertices that may be drawn in a single batched draw call.
@@ -85,6 +85,9 @@ pub enum Renderable {
 /// The `Batch` combines multiple render calls with the same uniform parameters (textures, camera matrix, etc.)
 /// into a single render pass.
 pub struct Batch {
+    device: Arc<Device>,
+    queue: Arc<Queue>,
+
     render_pipeline: RenderPipeline,
 
     vertex_buffer: Buffer,
@@ -99,7 +102,8 @@ impl Batch {
     /// Creates a new batch. Note that allocating enough room on the graphics card to store a batch is a relatively
     /// expensive operation - don't create a batch every frame or just for one object, for example.
     pub fn new(
-        device: &Device,
+        device: Arc<Device>,
+        queue: Arc<Queue>,
         vertex_source: ShaderModuleSource,
         fragment_source: ShaderModuleSource,
         texture_bind_group_layout: BindGroupLayout,
@@ -184,6 +188,9 @@ impl Batch {
         });
 
         Batch {
+            device,
+            queue,
+
             render_pipeline,
 
             vertex_buffer,
@@ -197,14 +204,12 @@ impl Batch {
 
     /// Renders the contents of the `verts` and `inds` buffers to the screen.
     #[inline(always)]
-    async fn flush(
+    fn flush(
         &mut self,
-        device: &Device,
-        queue: &Queue,
         frame: &SwapChainTexture,
         encoder: &mut CommandEncoder,
 
-        texture: &Asset<Texture>,
+        texture: &Texture,
 
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
@@ -216,30 +221,32 @@ impl Batch {
 
             let mut render = |texture: &Texture| {
                 // Describe how we want to send the texture to the GPU.
-                let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &self.texture_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&texture.view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                        },
-                    ],
-                    label: Some("texture_bind_group"),
-                });
+                let texture_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &self.texture_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&texture.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                            },
+                        ],
+                        label: Some("texture_bind_group"),
+                    });
 
                 // Describe how we want to send the uniforms to the GPU.
-                let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &self.uniform_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(self.uniform_buffer.slice(..)),
-                    }],
-                    label: Some("uniform_bind_group"),
-                });
+                let uniform_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &self.uniform_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(self.uniform_buffer.slice(..)),
+                        }],
+                        label: Some("uniform_bind_group"),
+                    });
 
                 // Begin recording a render pass. When we drop this struct, `wgpu` will finish recording.
                 // This allows us to send this recorded list of commands to the GPU.
@@ -262,27 +269,26 @@ impl Batch {
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..));
 
-                queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
-                queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&inds));
+                self.queue
+                    .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+                self.queue
+                    .write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&inds));
 
                 render_pass.draw_indexed(0..inds.len() as u32, 0, 0..1);
 
                 drop(render_pass);
                 let old_encoder = std::mem::replace(
                     encoder,
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Render Encoder"),
-                    }),
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Render Encoder"),
+                        }),
                 );
-                queue.submit(std::iter::once(old_encoder.finish()));
+                self.queue.submit(std::iter::once(old_encoder.finish()));
             };
 
             // TODO make a default texture for unloaded textures.
-            if let Some(asset) = texture.data.upgrade() {
-                if let LoadStatus::Loaded(tex) = &*asset.read().await {
-                    render(tex);
-                }
-            }
+            render(texture);
         }
 
         verts.clear();
@@ -292,14 +298,12 @@ impl Batch {
     /// If there is insufficient capacity to store this amount of new vertices and indices, we will flush
     /// the batch's buffers so that they are free to be used.
     #[inline(always)]
-    async fn ensure_capacity(
+    fn ensure_capacity(
         &mut self,
-        device: &Device,
-        queue: &Queue,
         frame: &SwapChainTexture,
         encoder: &mut CommandEncoder,
 
-        texture: &Asset<Texture>,
+        texture: &Texture,
 
         verts: &mut Vec<Vertex>,
         inds: &mut Vec<u16>,
@@ -308,47 +312,38 @@ impl Batch {
         new_inds: usize,
     ) {
         if verts.len() + new_verts > MAX_VERTEX_COUNT || inds.len() + new_inds > MAX_INDEX_COUNT {
-            self.flush(device, queue, frame, encoder, texture, verts, inds).await;
+            self.flush(frame, encoder, texture, verts, inds);
         }
     }
 
-    pub async fn render(
+    pub fn render(
         &mut self,
-        device: &Device,
-        queue: &Queue,
         frame: &SwapChainTexture,
 
-        texture: &Asset<Texture>,
+        texture: &Texture,
         camera: &crate::graphics::Camera,
         items: impl Iterator<Item = Renderable>,
     ) {
         // Create a command encoder that records our render information to be sent to the GPU.
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("batch_render_encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("batch_render_encoder"),
+            });
 
         // Store the vertices and indices so that we can write them to the vertex buffer and index buffer in a single function call.
         let mut verts = Vec::<Vertex>::new();
         let mut inds = Vec::<u16>::new();
 
         let uniforms = Uniforms::new(camera);
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
         for renderable in items {
             match renderable {
                 Renderable::Empty => {}
                 Renderable::Triangle(v0, v1, v2) => {
-                    self.ensure_capacity(
-                        device,
-                        queue,
-                        frame,
-                        &mut encoder,
-                        texture,
-                        &mut verts,
-                        &mut inds,
-                        3,
-                        3,
-                    ).await;
+                    self.ensure_capacity(frame, &mut encoder, texture, &mut verts, &mut inds, 3, 3);
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -358,17 +353,7 @@ impl Batch {
                     inds.push(i0 + 2);
                 }
                 Renderable::Quadrilateral(v0, v1, v2, v3) => {
-                    self.ensure_capacity(
-                        device,
-                        queue,
-                        frame,
-                        &mut encoder,
-                        texture,
-                        &mut verts,
-                        &mut inds,
-                        4,
-                        6,
-                    ).await;
+                    self.ensure_capacity(frame, &mut encoder, texture, &mut verts, &mut inds, 4, 6);
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -384,14 +369,6 @@ impl Batch {
             }
         }
 
-        self.flush(
-            device,
-            queue,
-            frame,
-            &mut encoder,
-            texture,
-            &mut verts,
-            &mut inds,
-        ).await;
+        self.flush(frame, &mut encoder, texture, &mut verts, &mut inds);
     }
 }

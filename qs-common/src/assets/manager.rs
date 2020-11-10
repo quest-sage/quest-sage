@@ -161,13 +161,17 @@ impl<T> Asset<T> {
     }
 
     /// If the asset is loaded, run this function on it.
-    pub async fn if_loaded(&self, func: impl FnOnce(&T)) {
+    /// Returns true if the asset was loaded.
+    pub async fn if_loaded(&self, func: impl FnOnce(&T)) -> bool {
         if let Some(data) = self.data.upgrade() {
             match &*data.read().await {
                 LoadStatus::Loading(_, _) => {}
                 LoadStatus::Loaded(value) => func(value),
                 LoadStatus::Failed(_) => {}
             }
+            true
+        } else {
+            false
         }
     }
 

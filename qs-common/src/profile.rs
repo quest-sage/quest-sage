@@ -145,6 +145,8 @@ impl Drop for ProfileSegmentGuard<'_> {
 }
 
 impl<'a> ProfileSegmentGuard<'a> {
+    /// TODO what happens if a subtask is timed multiple times?
+    /// Currently they're treated as separate iterations but that'll mess up the percentage counts.
     pub fn task(&mut self, name: TaskName) -> &mut ProfileSegment {
         let interpolation_amount = self.segment.interpolation_amount;
         self.segment

@@ -1,6 +1,5 @@
 use crate::graphics::Batch;
 use crate::ui::*;
-use qs_common::assets::OwnedAsset;
 use rusttype::gpu_cache::Cache;
 use stretch::geometry::Point;
 use std::sync::Arc;
@@ -23,7 +22,7 @@ pub struct TextRenderer {
     /// A cache containing CPU-side rendered font glyphs.
     cache: Cache<'static>,
     /// The texture containing pre-rendered GPU-side font glyphs.
-    font_texture: OwnedAsset<crate::graphics::Texture>,
+    font_texture: crate::graphics::Texture,
 
     /// Sometimes when we add new elements to the cache, we need to reorder or delete previous elements.
     /// Whenever this happens, we increment the 'generation' of the cache. Whenever the generation of the
@@ -44,7 +43,8 @@ impl TextRenderer {
         scale_factor: f32,
     ) -> Self {
         let batch = Batch::new(
-            &*device,
+            Arc::clone(&device),
+            Arc::clone(&queue),
             include_spirv!("text.vert.spv"),
             include_spirv!("text.frag.spv"),
             texture_bind_group_layout,
@@ -74,7 +74,7 @@ impl TextRenderer {
             format: wgpu::TextureFormat::R8Unorm,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
-        let font_texture = OwnedAsset::new(crate::graphics::Texture::from_wgpu_with_sampler(
+        let font_texture = crate::graphics::Texture::from_wgpu_with_sampler(
             &*device,
             font_texture,
             &wgpu::SamplerDescriptor {
@@ -86,7 +86,7 @@ impl TextRenderer {
                 mipmap_filter: wgpu::FilterMode::Nearest,
                 ..Default::default()
             },
-        ));
+        );
 
         Self {
             device,
@@ -103,15 +103,15 @@ impl TextRenderer {
     }
 
     /// Text is a list of words together with an offset at which to draw them.
-    pub async fn draw_text(
+    pub fn draw_text(
         &mut self,
         text: &Vec<(Point<f32>, RenderableWord)>,
         frame: &wgpu::SwapChainTexture,
         camera: &crate::graphics::Camera,
-        mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
+        //mut profiler: qs_common::profile::ProfileSegmentGuard<'_>,
     ) {
         {
-            let _guard = profiler.task("queuing glyphs").time();
+            //let _guard = profiler.task("queuing glyphs").time();
             for (_, word) in text {
                 for RenderableGlyph { font, glyph, .. } in &word.glyphs {
                     self.cache.queue_glyph(*font, glyph.clone());
@@ -120,49 +120,44 @@ impl TextRenderer {
         }
 
         {
-            let _guard = profiler.task("caching glyphs").time();
+            //let _guard = profiler.task("caching glyphs").time();
             let cache = &mut self.cache;
             let queue = &self.queue;
-            let mut cache_generation = self.cache_generation;
-            self.font_texture
-                .if_loaded(|font_texture| {
-                    let cache_method = cache
-                        .cache_queued(|rect, data| {
-                            queue.write_texture(
-                                wgpu::TextureCopyView {
-                                    texture: &font_texture.texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d {
-                                        x: rect.min.x,
-                                        y: rect.min.y,
-                                        z: 0,
-                                    },
-                                },
-                                data,
-                                wgpu::TextureDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: rect.width(),
-                                    rows_per_image: 0,
-                                },
-                                wgpu::Extent3d {
-                                    width: rect.width(),
-                                    height: rect.height(),
-                                    depth: 1,
-                                },
-                            );
-                        })
-                        .unwrap();
-                    if let rusttype::gpu_cache::CachedBy::Reordering = cache_method {
-                        cache_generation += 1;
-                    }
+            let font_texture = &self.font_texture;
+            let cache_method = cache
+                .cache_queued(|rect, data| {
+                    queue.write_texture(
+                        wgpu::TextureCopyView {
+                            texture: &font_texture.texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: rect.min.x,
+                                y: rect.min.y,
+                                z: 0,
+                            },
+                        },
+                        data,
+                        wgpu::TextureDataLayout {
+                            offset: 0,
+                            bytes_per_row: rect.width(),
+                            rows_per_image: 0,
+                        },
+                        wgpu::Extent3d {
+                            width: rect.width(),
+                            height: rect.height(),
+                            depth: 1,
+                        },
+                    );
                 })
-                .await;
-            self.cache_generation = cache_generation;
+                .unwrap();
+            if let rusttype::gpu_cache::CachedBy::Reordering = cache_method {
+                self.cache_generation += 1;
+            }
         }
 
         let mut items = Vec::new();
         {
-            let _guard = profiler.task("creating texture coordinates").time();
+            //let _guard = profiler.task("creating texture coordinates").time();
             /*if self.cache_generation == cache_generation && self.cached_renderables.is_some() {
                 items = self.cached_renderables.as_ref().unwrap().clone();
             } else */{
@@ -216,17 +211,14 @@ impl TextRenderer {
         }
 
         {
-            let _guard = profiler.task("rendering text").time();
+            //let _guard = profiler.task("rendering text").time();
             self.batch
                 .render(
-                    &*self.device,
-                    &*self.queue,
                     frame,
                     &self.font_texture,
                     camera,
                     items.into_iter(),
-                )
-                .await;
+                );
         }
     }
 }

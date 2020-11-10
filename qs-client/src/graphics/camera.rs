@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::sync::RwLock;
 
 use cgmath::{ortho, prelude::*, Matrix4, Point2};
 
@@ -70,9 +70,9 @@ pub struct Camera {
     data: CameraData,
 
     /// Caches the value of the camera's projection matrix.
-    projection_matrix: Cell<Option<Matrix4<f32>>>,
+    projection_matrix: RwLock<Option<Matrix4<f32>>>,
     /// Caches the value of the camera's view matrix.
-    view_matrix: Cell<Option<Matrix4<f32>>>,
+    view_matrix: RwLock<Option<Matrix4<f32>>>,
 }
 
 impl Camera {
@@ -80,30 +80,30 @@ impl Camera {
         Camera {
             data,
 
-            projection_matrix: Cell::new(None),
-            view_matrix: Cell::new(None),
+            projection_matrix: RwLock::new(None),
+            view_matrix: RwLock::new(None),
         }
     }
 
     pub fn get_projection_matrix(&self) -> Matrix4<f32> {
-        let value = self.projection_matrix.get();
-        match value {
+        let mut proj = self.projection_matrix.write().unwrap();
+        match *proj {
             Some(matrix) => matrix,
             None => {
                 let new_matrix = self.data.generate_projection_matrix();
-                self.projection_matrix.set(Some(new_matrix));
+                *proj = Some(new_matrix);
                 new_matrix
             }
         }
     }
 
     pub fn get_view_matrix(&self) -> Matrix4<f32> {
-        let value = self.view_matrix.get();
-        match value {
+        let mut view = self.view_matrix.write().unwrap();
+        match *view {
             Some(matrix) => matrix,
             None => {
                 let new_matrix = self.data.generate_view_matrix();
-                self.view_matrix.set(Some(new_matrix));
+                *view = Some(new_matrix);
                 new_matrix
             }
         }
@@ -115,8 +115,8 @@ impl Camera {
 
     /// Deletes all the caches for known matrices.
     pub fn get_data_mut(&mut self) -> &mut CameraData {
-        self.projection_matrix.set(None);
-        self.view_matrix.set(None);
+        *self.projection_matrix.write().unwrap() = None;
+        *self.view_matrix.write().unwrap() = None;
         &mut self.data
     }
 

@@ -6,3 +6,5 @@ mod widget;
 pub use widget::*;
 mod colour;
 pub use colour::*;
+mod texture;
+pub use texture::*;

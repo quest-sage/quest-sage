@@ -1,6 +1,9 @@
 use std::sync::Arc;
 use std::time::Instant;
-use stretch::geometry::Point;
+use stretch::{
+    geometry::{Point, Size},
+    style::{Dimension, Style},
+};
 use wgpu::*;
 use winit::{
     event::*,
@@ -59,6 +62,8 @@ pub struct Application {
 
     /// A test widget.
     test_text: RichText,
+    /// The root UI widget.
+    ui: Widget,
 }
 
 impl Application {
@@ -170,7 +175,8 @@ impl Application {
 
         // Let's create a batch to render many shapes in a single render pass.
         let batch = Batch::new(
-            &device,
+            Arc::clone(&device),
+            Arc::clone(&queue),
             include_spirv!("shader.vert.spv"),
             include_spirv!("shader.frag.spv"),
             device.create_bind_group_layout(&texture_bind_group_layout_desc),
@@ -178,7 +184,7 @@ impl Application {
             swap_chain_descriptor.format,
         );
 
-        let texture_am = AssetManager::new(TextureAssetLoader::new(
+        let mut texture_am = AssetManager::new(TextureAssetLoader::new(
             Arc::clone(&device),
             Arc::clone(&queue),
         ));
@@ -239,17 +245,46 @@ impl Application {
         .write("äÄöÖüÜß€")
         .end_paragraph()
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
-        .finish().await.expect("could not complete task");
+        .finish().await.expect("could not complete task");        
 
-        test_text
-            .0
-            .read()
-            .unwrap()
-            .widget
-            .layout(stretch::geometry::Size {
-                width: stretch::number::Number::Defined(800.0),
-                height: stretch::number::Number::Undefined,
-            });
+        let ui = Widget::new(
+            (),
+            vec![
+                test_text.0.read().unwrap().widget.clone(),
+                Widget::new(
+                    ImageWidget {
+                        size: Size {
+                            width: Dimension::Points(100.0),
+                            height: Dimension::Points(100.0),
+                        },
+                        colour: Colour {
+                            r: 1.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.7,
+                        },
+                        texture: texture_am.get(AssetPath::new(vec!["test.png".to_string()])),
+                    },
+                    Vec::new(),
+                    Style {
+                        //align_self: stretch::style::AlignSelf::Stretch,
+                        ..Default::default()
+                    },
+                ),
+            ],
+            Style {
+                //align_self: stretch::style::AlignSelf::Stretch,
+                //align_items: stretch::style::AlignItems::Stretch,
+                //justify_content: stretch::style::JustifyContent::Center,
+                flex_direction: stretch::style::FlexDirection::Column,
+                ..Default::default()
+            },
+        );
+
+        ui.layout(stretch::geometry::Size {
+            width: stretch::number::Number::Defined(800.0),
+            height: stretch::number::Number::Undefined,
+        });
 
         let mut app = Application {
             window,
@@ -274,6 +309,7 @@ impl Application {
             multi_batch,
 
             test_text,
+            ui,
         };
 
         // Call resize at the start so that we initialise cameras etc with the correct aspect ratio.
@@ -392,18 +428,13 @@ impl Application {
                     )
                 });
 
-            self.multi_batch
-                .batch
-                .render(
-                    &self.device,
-                    &self.queue,
-                    &frame,
-                    &self
-                        .texture_am
-                        .get(AssetPath::new(vec!["test.png".to_string()])),
-                    &self.camera,
-                    renderables,
-                )
+            self.texture_am
+                .get(AssetPath::new(vec!["test.png".to_string()]))
+                .if_loaded(|tex| {
+                    self.multi_batch
+                        .batch
+                        .render(&frame, tex, &self.camera, renderables);
+                })
                 .await;
         }
 
@@ -411,13 +442,7 @@ impl Application {
             let guard = profiler.task("ui").time();
             self.multi_batch
                 .render(
-                    self.test_text
-                        .0
-                        .read()
-                        .unwrap()
-                        .widget
-                        .generate_render_info(Point { x: 0.0, y: 0.0 })
-                        .await,
+                    self.ui.generate_render_info(Point { x: 0.0, y: 0.0 }).await,
                     &frame,
                     &self.ui_camera,
                     guard,

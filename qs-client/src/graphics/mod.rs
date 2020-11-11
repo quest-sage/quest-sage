@@ -1,9 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
-use stretch::{
-    geometry::{Point, Size},
-    style::{Dimension, Style},
-};
+use stretch::{number::Number, geometry::{Point, Size}, style::{Dimension, Style}};
 use wgpu::*;
 use winit::{
     event::*,
@@ -255,9 +252,9 @@ impl Application {
                     height: Dimension::Points(100.0),
                 },
                 colour: Colour {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 0.0,
+                    r: 0.4,
+                    g: 0.3,
+                    b: 0.4,
                     a: 0.7,
                 },
                 texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
@@ -327,6 +324,11 @@ impl Application {
         *view_height = new_size.height as f32;
         self.ui_camera
             .update_window_size(new_size.width, new_size.height);
+
+        self.ui.layout(Size {
+            width: Number::Defined(new_size.width as f32),
+            height: Number::Defined(new_size.height as f32),
+        })
     }
 
     /// Renders a single frame, submitting it to the swap chain.
@@ -433,11 +435,12 @@ impl Application {
                 .render(
                     self.ui
                         .generate_render_info(
-                            Point { x: 0.0, y: 0.0 },
-                            Some(
+                            Point { x: self.size.width as f32 * -0.5, y: self.size.height as f32 * -0.5 },
+                            /*Some(
                                 self.texture_am
                                     .get(AssetPath::new(vec!["white.png".to_string()])),
-                            ),
+                            ),*/
+                            None,
                         )
                         .await,
                     &frame,

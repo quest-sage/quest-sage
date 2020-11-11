@@ -679,26 +679,31 @@ async fn typeset_rich_text_paragraph(
 
             let (font, base_glyph) =
                 font_and_glyph.expect("no replacement characters found in font");
-            if let Some((last_font_id, last_glyph_id)) = last_glyph.take() {
-                if font == last_font_id {
-                    let font_id_to_font_map = FONT_ID_TO_FONT_MAP.read().await;
-                    let font_asset = font_id_to_font_map
-                        .get(&font)
-                        .expect("could not retrieve font for font ID");
-                    let font_asset_data = font_asset
-                        .data
-                        .upgrade()
-                        .expect("asset manager containing font was dropped");
-                    if let qs_common::assets::LoadStatus::Loaded(font_data) =
-                        &*font_asset_data.read().await
-                    {
-                        caret_x += font_data.pair_kerning(scale, last_glyph_id, base_glyph.id());
-                    };
-                }
-            }
 
+            let font_id_to_font_map = FONT_ID_TO_FONT_MAP.read().await;
+            let font_asset = font_id_to_font_map
+                .get(&font)
+                .expect("could not retrieve font for font ID");
+            let font_asset_data = font_asset
+                    .data
+                    .upgrade()
+                    .expect("asset manager containing font was dropped");
+
+            let mut descender_height = 0.0;
+            if let qs_common::assets::LoadStatus::Loaded(font_data) =
+                &*font_asset_data.read().await
+            {
+                descender_height = font_data.v_metrics(scale).descent;
+                if let Some((last_font_id, last_glyph_id)) = last_glyph.take() {
+                    if font == last_font_id {
+                        caret_x += font_data.pair_kerning(scale, last_glyph_id, base_glyph.id());
+                    }
+                }
+            };
+
+            
             last_glyph = Some((font, base_glyph.id()));
-            let glyph = base_glyph.scaled(scale).positioned(point(caret_x, 0.0));
+            let glyph = base_glyph.scaled(scale).positioned(point(caret_x, descender_height));
 
             caret_x += glyph.unpositioned().h_metrics().advance_width;
             let v_metrics = glyph.unpositioned().font().v_metrics(scale);

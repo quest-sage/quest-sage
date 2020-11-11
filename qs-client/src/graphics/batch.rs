@@ -298,7 +298,7 @@ impl Batch {
     /// If there is insufficient capacity to store this amount of new vertices and indices, we will flush
     /// the batch's buffers so that they are free to be used.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // We're going to ignore clippy's suggestion here because the function is internal and inline always.
     fn ensure_capacity(
         &mut self,
         frame: &SwapChainTexture,

@@ -1,4 +1,5 @@
 use crate::graphics::{MultiRenderable, Renderable};
+use futures::future::{AbortHandle, AbortRegistration, Abortable, Aborted};
 use qs_common::assets::Asset;
 use rusttype::{point, Font, PositionedGlyph, Scale};
 use std::collections::HashMap;
@@ -150,21 +151,25 @@ impl RichText {
         );
         Self(Arc::new(RwLock::new(RichTextContents {
             paragraphs: Vec::new(),
-            current_text_id: 0,
             widget,
+            typeset_abort_handle: None,
         })))
     }
 
     pub fn set_text(&mut self, font_family: Arc<FontFamily>) -> RichTextContentsBuilder {
         let mut write = self.0.write().unwrap();
-        write.current_text_id += 1;
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        if let Some(old_abort_handle) = write.typeset_abort_handle.take() {
+            old_abort_handle.abort();
+        }
+        write.typeset_abort_handle = Some(abort_handle);
         RichTextContentsBuilder {
             output: Self(Arc::clone(&self.0)),
             style: RichTextStyle::default(font_family),
             paragraphs: Vec::new(),
             current_paragraph: Vec::new(),
             is_internal: false,
-            text_id: write.current_text_id,
+            abort_registration,
         }
     }
 }
@@ -216,47 +221,44 @@ pub struct RichTextContents {
     /// Whenever the list of paragraphs is updated, a background task is spawned to render this text.
     pub widget: Widget,
 
-    /// This is a counter that tracks how many times this text object has been updated. Every time `finish` is called on a builder
-    /// to set the text contents, this is incremented. Background tasks typesetting this new text will only update
-    /// the `typeset` variable if their `text_id` matches this `current_text_id`. This ensures that when we update text twice quickly,
-    /// the first task is essentially cancelled.
-    current_text_id: u64,
+    /// If we're currently typesetting some text but try to set the value of the text again, we can use this abort handle
+    /// to cancel the typeset task so we don't accidentally typeset something twice (or worse, the order of execution
+    /// of the tasks is swapped).
+    typeset_abort_handle: Option<AbortHandle>,
 }
 
 impl RichTextContents {
-    fn write(&mut self, text_id: u64, paragraphs: Vec<RichTextParagraph>, typeset: TypesetText) {
-        if self.current_text_id == text_id {
-            self.paragraphs = paragraphs;
-            // TODO invalidate hierarchy, force re-layout
-            let cloned = self.widget.clone();
-            tokio::task::spawn(async move {
-                // Construct the widget hierarchy.
-                let mut write = cloned.0.write().await;
-                write.children = typeset
-                    .paragraphs
-                    .into_iter()
-                    .map(|paragraph| {
-                        let words: Vec<_> = paragraph
-                            .0
-                            .into_iter()
-                            .map(|word| {
-                                Widget::new(word, Vec::new(), Vec::new(), Default::default())
-                            })
-                            .collect();
-                        Widget::new(
-                            RichTextWidgetContainer,
-                            words,
-                            Vec::new(),
-                            Style {
-                                flex_wrap: FlexWrap::Wrap,
-                                align_items: AlignItems::FlexEnd,
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .collect();
-            });
-        }
+    fn write(&mut self, paragraphs: Vec<RichTextParagraph>, typeset: TypesetText) {
+        self.paragraphs = paragraphs;
+        // TODO invalidate hierarchy, force re-layout
+        let cloned = self.widget.clone();
+        tokio::task::spawn(async move {
+            // Construct the widget hierarchy.
+            let mut write = cloned.0.write().await;
+            write.children = typeset
+                .paragraphs
+                .into_iter()
+                .map(|paragraph| {
+                    let words: Vec<_> = paragraph
+                        .0
+                        .into_iter()
+                        .map(|word| {
+                            Widget::new(word, Vec::new(), Vec::new(), Default::default())
+                        })
+                        .collect();
+                    Widget::new(
+                        RichTextWidgetContainer,
+                        words,
+                        Vec::new(),
+                        Style {
+                            flex_wrap: FlexWrap::Wrap,
+                            align_items: AlignItems::FlexEnd,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect();
+        });
     }
 }
 
@@ -275,10 +277,8 @@ pub struct RichTextContentsBuilder {
     /// text, and isn't the main contents builder. If `finish` is called on an internal builder, it will panic.
     is_internal: bool,
 
-    /// The ID of the text we're typesetting. If this does not match the value contained within the text object, we won't produce any output.
-    /// This can happen when we set the text again while we're still typesetting the old value. The typesetting task
-    /// we're currently doing is therefore pointless, so it can be cancelled.
-    text_id: u64,
+    /// This abort registration allows us to abort the typeset task later.
+    abort_registration: AbortRegistration,
 }
 
 impl RichTextContentsBuilder {
@@ -395,9 +395,10 @@ impl RichTextContentsBuilder {
             paragraphs: Vec::new(),
             current_paragraph: Vec::new(),
             is_internal: true,
-            text_id: self.text_id,
+            abort_registration: self.abort_registration,
         };
         let mut result = styled(child);
+        self.abort_registration = result.abort_registration; // Transfer ownership of abort_registration back to self.
         for mut paragraph in result.paragraphs {
             self.current_paragraph.append(&mut paragraph);
             self = self.end_paragraph()
@@ -410,7 +411,7 @@ impl RichTextContentsBuilder {
     ///
     /// # Panics
     /// If this is an internal builder (e.g. produced by the `h1` function), this will panic.
-    pub fn finish(self) -> JoinHandle<()> {
+    pub fn finish(self) -> JoinHandle<Result<(), Aborted>> {
         if self.is_internal {
             panic!("cannot call `finish` on internal builders");
         }
@@ -420,15 +421,14 @@ impl RichTextContentsBuilder {
             paragraphs.push(self.current_paragraph);
         }
         let output = self.output;
-        let text_id = self.text_id;
-        tokio::spawn(async move {
+        tokio::spawn(Abortable::new(async move {
             // We clone the paragraph data here so that the background thread can't cause the main thread to halt.
             let paragraphs_cloned = paragraphs.clone();
             let typeset_text = typeset_rich_text(paragraphs_cloned).await;
 
             let mut rich_text = output.0.write().unwrap();
-            rich_text.write(text_id, paragraphs, typeset_text);
-        })
+            rich_text.write(paragraphs, typeset_text);
+        }, self.abort_registration))
     }
 }
 
@@ -685,13 +685,12 @@ async fn typeset_rich_text_paragraph(
                 .get(&font)
                 .expect("could not retrieve font for font ID");
             let font_asset_data = font_asset
-                    .data
-                    .upgrade()
-                    .expect("asset manager containing font was dropped");
+                .data
+                .upgrade()
+                .expect("asset manager containing font was dropped");
 
             let mut descender_height = 0.0;
-            if let qs_common::assets::LoadStatus::Loaded(font_data) =
-                &*font_asset_data.read().await
+            if let qs_common::assets::LoadStatus::Loaded(font_data) = &*font_asset_data.read().await
             {
                 descender_height = font_data.v_metrics(scale).descent;
                 if let Some((last_font_id, last_glyph_id)) = last_glyph.take() {
@@ -701,9 +700,10 @@ async fn typeset_rich_text_paragraph(
                 }
             };
 
-            
             last_glyph = Some((font, base_glyph.id()));
-            let glyph = base_glyph.scaled(scale).positioned(point(caret_x, descender_height));
+            let glyph = base_glyph
+                .scaled(scale)
+                .positioned(point(caret_x, descender_height));
 
             caret_x += glyph.unpositioned().h_metrics().advance_width;
             let v_metrics = glyph.unpositioned().font().v_metrics(scale);

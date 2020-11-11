@@ -51,13 +51,14 @@ pub struct Application {
     fps_counter: InterpolatedStopwatch,
 
     texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
-    //font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
+    font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
     camera: Camera,
     ui_camera: Camera,
     multi_batch: MultiBatch,
 
+    test_font_family: Arc<FontFamily>,
     /// A test widget.
-    //test_text: RichText,
+    test_text: RichText,
     /// The root UI widget.
     ui: Widget,
 }
@@ -206,7 +207,7 @@ impl Application {
             Some(font_am.get(AssetPath::new(vec!["NotoSans-Italic.ttf".to_string()]))),
             Some(font_am.get(AssetPath::new(vec!["NotoSans-BoldItalic.ttf".to_string()]))),
         )]));
-        test_text.set_text(test_font_family)
+        let _ = test_text.set_text(Arc::clone(&test_font_family))
         .h1(|b| b
             .write("Header thing ")
             .italic(|b| b
@@ -289,12 +290,13 @@ impl Application {
             fps_counter: InterpolatedStopwatch::new(100),
 
             texture_am,
-            //font_am,
+            font_am,
             camera,
             ui_camera,
             multi_batch,
 
-            //test_text,
+            test_font_family,
+            test_text,
             ui,
         };
 
@@ -339,7 +341,9 @@ impl Application {
         let _delta_seconds = delta_duration.as_secs_f32();
         self.fps_counter.tick();
 
+        
         if self.fps_counter.ticks % 100 == 0 {
+            self.test_text.set_text(Arc::clone(&self.test_font_family)).write(&format!("{} frames", self.fps_counter.ticks)).finish();
             tracing::trace!(
                 "{:.2} FPS",
                 1.0 / self.fps_counter.average_time().as_secs_f64()

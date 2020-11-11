@@ -1,3 +1,4 @@
+use qs_common::assets::Asset;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -155,7 +156,18 @@ impl Widget {
         });
     }
 
-    pub fn generate_render_info(&self, offset: Point<f32>) -> BoxFuture<MultiRenderable> {
+    /// Generates a `MultiRenderable` so that we can render this widget.
+    ///
+    /// Y coordinates are typically reversed in this method; the flexbox library expects Y to increase in the downwards direction
+    /// but our render expects Y to increase in the upwards direction.
+    ///
+    /// If render_debug is a texture, additional lines will be drawn using this texture for debug information for each
+    /// child widget.
+    pub fn generate_render_info(
+        &self,
+        offset: Point<f32>,
+        debug_line_texture: Option<Asset<Texture>>,
+    ) -> BoxFuture<MultiRenderable> {
         async move {
             let read = self.0.read().await;
             if let Some(mut layout) = read.layout {
@@ -164,9 +176,126 @@ impl Widget {
                 layout.location.y += offset.y;
                 items.push(read.element.generate_render_info(&layout));
                 for child in &read.children {
-                    items.push(child.generate_render_info(layout.location).await);
+                    items.push(
+                        child
+                            .generate_render_info(layout.location, debug_line_texture.clone())
+                            .await,
+                    );
                 }
+
+                if let Some(debug_line_texture) = debug_line_texture {
+                    let (x0, y0) = (layout.location.x, -layout.location.y);
+                    let (x1, y1) = (
+                        layout.location.x + layout.size.width,
+                        -layout.location.y - layout.size.height,
+                    );
+                    const SIZE: f32 = 1.0;
+                    // Create four lines of the given thickness (`SIZE`) to surround the widget.
+                    let color = super::Colour {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 1.0,
+                    }
+                    .into();
+                    let tex_coords = [0.0, 0.0];
+                    items.push(MultiRenderable::Image {
+                        texture: debug_line_texture,
+                        renderables: vec![
+                            Renderable::Quadrilateral(
+                                Vertex {
+                                    position: [x0, y0, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x0 + SIZE, y0, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x0 + SIZE, y1, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x0, y1, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                            ),
+                            Renderable::Quadrilateral(
+                                Vertex {
+                                    position: [x1, y0, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1 - SIZE, y0, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1 - SIZE, y1, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1, y1, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                            ),
+                            Renderable::Quadrilateral(
+                                Vertex {
+                                    position: [x0, y0, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x0, y0 + SIZE, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1, y0 + SIZE, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1, y0, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                            ),
+                            Renderable::Quadrilateral(
+                                Vertex {
+                                    position: [x0, y1, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x0, y1 - SIZE, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1, y1 - SIZE, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                                Vertex {
+                                    position: [x1, y1, 0.0],
+                                    color,
+                                    tex_coords,
+                                },
+                            ),
+                        ],
+                    })
+                }
+
                 let renderable = MultiRenderable::Adjacent(items);
+
                 if read.backgrounds.is_empty() {
                     renderable
                 } else {

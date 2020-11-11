@@ -55,7 +55,6 @@ pub struct Application {
 
     texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
     //font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
-
     camera: Camera,
     ui_camera: Camera,
     multi_batch: MultiBatch,
@@ -261,7 +260,7 @@ impl Application {
                     b: 0.0,
                     a: 0.7,
                 },
-                texture: texture_am.get(AssetPath::new(vec!["test.png".to_string()])),
+                texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
             })],
             Style {
                 //align_self: stretch::style::AlignSelf::Stretch,
@@ -294,7 +293,6 @@ impl Application {
 
             texture_am,
             //font_am,
-
             camera,
             ui_camera,
             multi_batch,
@@ -433,7 +431,15 @@ impl Application {
             let guard = profiler.task("ui").time();
             self.multi_batch
                 .render(
-                    self.ui.generate_render_info(Point { x: 0.0, y: 0.0 }).await,
+                    self.ui
+                        .generate_render_info(
+                            Point { x: 0.0, y: 0.0 },
+                            Some(
+                                self.texture_am
+                                    .get(AssetPath::new(vec!["white.png".to_string()])),
+                            ),
+                        )
+                        .await,
                     &frame,
                     &self.ui_camera,
                     guard,

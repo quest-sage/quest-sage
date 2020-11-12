@@ -234,8 +234,9 @@ impl RichTextContents {
         let cloned = self.widget.clone();
         tokio::task::spawn(async move {
             // Construct the widget hierarchy.
-            let mut write = cloned.0.write().await;
-            write.children = typeset
+            let mut write = cloned.0.write().unwrap();
+            write.clear_children();
+            typeset
                 .paragraphs
                 .into_iter()
                 .map(|paragraph| {
@@ -257,7 +258,7 @@ impl RichTextContents {
                         },
                     )
                 })
-                .collect();
+                .for_each(|item| write.add_child(item));
         });
     }
 }

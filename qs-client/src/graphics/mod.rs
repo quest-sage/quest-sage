@@ -51,7 +51,7 @@ pub struct Application {
     fps_counter: InterpolatedStopwatch,
 
     texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
-    font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
+    _font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
     camera: Camera,
     ui_camera: Camera,
     multi_batch: MultiBatch,
@@ -59,8 +59,7 @@ pub struct Application {
     test_font_family: Arc<FontFamily>,
     /// A test widget.
     test_text: RichText,
-    /// The root UI widget.
-    ui: Widget,
+    ui: UI,
 }
 
 impl Application {
@@ -244,7 +243,7 @@ impl Application {
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish().await.expect("could not complete task");
 
-        let ui = Widget::new(
+        let root = Widget::new(
             (),
             vec![test_text.0.read().unwrap().widget.clone()],
             vec![Box::new(ImageWidget {
@@ -269,9 +268,9 @@ impl Application {
             },
         );
 
-        ui.layout(stretch::geometry::Size {
-            width: stretch::number::Number::Defined(800.0),
-            height: stretch::number::Number::Undefined,
+        let ui = UI::new(root, Size {
+            width: Number::Defined(100.0),
+            height: Number::Defined(100.0),
         });
 
         let mut app = Application {
@@ -290,7 +289,7 @@ impl Application {
             fps_counter: InterpolatedStopwatch::new(100),
 
             texture_am,
-            font_am,
+            _font_am: font_am,
             camera,
             ui_camera,
             multi_batch,
@@ -327,7 +326,7 @@ impl Application {
         self.ui_camera
             .update_window_size(new_size.width, new_size.height);
 
-        self.ui.layout(Size {
+        self.ui.update_size(Size {
             width: Number::Defined(new_size.width as f32),
             height: Number::Defined(new_size.height as f32),
         })
@@ -445,8 +444,7 @@ impl Application {
                                     .get(AssetPath::new(vec!["white.png".to_string()])),
                             ),*/
                             None,
-                        )
-                        .await,
+                        ),
                     &frame,
                     &self.ui_camera,
                     guard,

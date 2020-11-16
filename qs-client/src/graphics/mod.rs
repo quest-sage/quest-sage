@@ -251,10 +251,54 @@ impl Application {
         .finish().await.expect("could not complete task");
 
         let button_style = ButtonStyle {
-            released_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
-            hovered_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
-            pressed_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
-            disabled_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+            released_texture: NinePatch {
+                texture: texture_am.get(AssetPath::new(vec![
+                    "ui".to_string(),
+                    "button.png".to_string(),
+                ])),
+                texture_width: 8.0,
+                texture_height: 8.0,
+                left_margin: 2.0,
+                right_margin: 2.0,
+                top_margin: 2.0,
+                bottom_margin: 2.0,
+            },
+            hovered_texture: NinePatch {
+                texture: texture_am.get(AssetPath::new(vec![
+                    "ui".to_string(),
+                    "button_hovered.png".to_string(),
+                ])),
+                texture_width: 8.0,
+                texture_height: 8.0,
+                left_margin: 2.0,
+                right_margin: 2.0,
+                top_margin: 2.0,
+                bottom_margin: 2.0,
+            },
+            pressed_texture: NinePatch {
+                texture: texture_am.get(AssetPath::new(vec![
+                    "ui".to_string(),
+                    "button_pressed.png".to_string(),
+                ])),
+                texture_width: 8.0,
+                texture_height: 8.0,
+                left_margin: 2.0,
+                right_margin: 2.0,
+                top_margin: 2.0,
+                bottom_margin: 2.0,
+            },
+            disabled_texture: NinePatch {
+                texture: texture_am.get(AssetPath::new(vec![
+                    "ui".to_string(),
+                    "button_disabled.png".to_string(),
+                ])),
+                texture_width: 8.0,
+                texture_height: 8.0,
+                left_margin: 2.0,
+                right_margin: 2.0,
+                top_margin: 2.0,
+                bottom_margin: 2.0,
+            },
         };
 
         let test_button = Widget::new(

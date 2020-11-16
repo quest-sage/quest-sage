@@ -3,11 +3,10 @@ use std::sync::{
     Arc,
 };
 
-use qs_common::assets::Asset;
 use stretch::{geometry::Size, result::Layout, style::Dimension};
 use winit::event::{ElementState, MouseButton};
 
-use crate::graphics::{MultiRenderable, Renderable, Texture, Vertex};
+use crate::graphics::{MultiRenderable, NinePatch};
 
 use super::{Colour, UiElement};
 
@@ -21,13 +20,13 @@ pub struct Button {
 #[derive(Debug, Clone)]
 pub struct ButtonStyle {
     /// The texture to be rendered when the button is not being held.
-    pub released_texture: Asset<Texture>,
+    pub released_texture: NinePatch,
     /// The texture to be rendered when the mouse is hovering over the button.
-    pub hovered_texture: Asset<Texture>,
+    pub hovered_texture: NinePatch,
     /// The texture to be rendered when the mouse is currently pressed on the button.
-    pub pressed_texture: Asset<Texture>,
+    pub pressed_texture: NinePatch,
     /// The texture to be rendered when the button is disabled, i.e. not clickable.
-    pub disabled_texture: Asset<Texture>,
+    pub disabled_texture: NinePatch,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -74,53 +73,23 @@ impl UiElement for Button {
     fn generate_render_info(&self, layout: &Layout) -> MultiRenderable {
         let disabled = self.disabled.load(Ordering::Relaxed);
 
-        let color = Colour::WHITE.into();
-        MultiRenderable::Image {
-            texture: if disabled {
-                self.style.disabled_texture.clone()
-            } else {
-                match self.state {
-                    ButtonState::Released => self.style.released_texture.clone(),
-                    ButtonState::Hovered => self.style.hovered_texture.clone(),
-                    ButtonState::Pressed => self.style.pressed_texture.clone(),
-                    ButtonState::PressedNotHovered => self.style.pressed_texture.clone(),
-                }
-            },
-            renderables: vec![Renderable::Quadrilateral(
-                Vertex {
-                    position: [layout.location.x, -layout.location.y, 0.0],
-                    color,
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [
-                        layout.location.x + layout.size.width,
-                        -layout.location.y,
-                        0.0,
-                    ],
-                    color,
-                    tex_coords: [1.0, 0.0],
-                },
-                Vertex {
-                    position: [
-                        layout.location.x + layout.size.width,
-                        -layout.location.y - layout.size.height,
-                        0.0,
-                    ],
-                    color,
-                    tex_coords: [1.0, 1.0],
-                },
-                Vertex {
-                    position: [
-                        layout.location.x,
-                        -layout.location.y - layout.size.height,
-                        0.0,
-                    ],
-                    color,
-                    tex_coords: [0.0, 1.0],
-                },
-            )],
-        }
+        let nine_patch = if disabled {
+            &self.style.disabled_texture
+        } else {
+            match self.state {
+                ButtonState::Released => &self.style.released_texture,
+                ButtonState::Hovered => &self.style.hovered_texture,
+                ButtonState::Pressed => &self.style.pressed_texture,
+                ButtonState::PressedNotHovered => &self.style.pressed_texture,
+            }
+        };
+        nine_patch.generate_render_info(
+            Colour::WHITE,
+            layout.location.x,
+            -layout.location.y - layout.size.height,
+            layout.size.width,
+            layout.size.height,
+        )
     }
 
     fn process_mouse_input(&mut self, button: MouseButton, state: ElementState) -> bool {

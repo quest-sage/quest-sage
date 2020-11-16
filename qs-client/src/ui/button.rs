@@ -1,3 +1,8 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use qs_common::assets::Asset;
 use stretch::{geometry::Size, result::Layout, style::Dimension};
 use winit::event::{ElementState, MouseButton};
@@ -10,6 +15,7 @@ pub struct Button {
     style: ButtonStyle,
     state: ButtonState,
     on_click: Box<dyn Fn() + Send + Sync + 'static>,
+    disabled: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,7 +36,6 @@ enum ButtonState {
     Hovered,
     Pressed,
     PressedNotHovered,
-    Disabled,
 }
 
 impl Button {
@@ -39,6 +44,21 @@ impl Button {
             style,
             state: ButtonState::Released,
             on_click: Box::new(on_click),
+            disabled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// If `disabled` is ever set to `true`, the button will not be clickable.
+    pub fn new_disableable(
+        style: ButtonStyle,
+        on_click: impl Fn() + Send + Sync + 'static,
+        disabled: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            style,
+            state: ButtonState::Released,
+            on_click: Box::new(on_click),
+            disabled,
         }
     }
 }
@@ -52,14 +72,19 @@ impl UiElement for Button {
     }
 
     fn generate_render_info(&self, layout: &Layout) -> MultiRenderable {
+        let disabled = self.disabled.load(Ordering::Relaxed);
+
         let color = Colour::WHITE.into();
         MultiRenderable::Image {
-            texture: match self.state {
-                ButtonState::Released => self.style.released_texture.clone(),
-                ButtonState::Hovered => self.style.hovered_texture.clone(),
-                ButtonState::Pressed => self.style.pressed_texture.clone(),
-                ButtonState::PressedNotHovered => self.style.pressed_texture.clone(),
-                ButtonState::Disabled => self.style.disabled_texture.clone(),
+            texture: if disabled {
+                self.style.disabled_texture.clone()
+            } else {
+                match self.state {
+                    ButtonState::Released => self.style.released_texture.clone(),
+                    ButtonState::Hovered => self.style.hovered_texture.clone(),
+                    ButtonState::Pressed => self.style.pressed_texture.clone(),
+                    ButtonState::PressedNotHovered => self.style.pressed_texture.clone(),
+                }
             },
             renderables: vec![Renderable::Quadrilateral(
                 Vertex {
@@ -99,11 +124,15 @@ impl UiElement for Button {
     }
 
     fn process_mouse_input(&mut self, button: MouseButton, state: ElementState) -> bool {
+        let disabled = self.disabled.load(Ordering::Relaxed);
+
         if let MouseButton::Left = button {
             match state {
                 ElementState::Pressed => {
                     if self.state == ButtonState::Hovered {
-                        self.state = ButtonState::Pressed;
+                        if !disabled {
+                            self.state = ButtonState::Pressed;
+                        }
                         true
                     } else {
                         false
@@ -112,8 +141,10 @@ impl UiElement for Button {
                 ElementState::Released => {
                     if self.state == ButtonState::Pressed {
                         self.state = ButtonState::Hovered;
-                        let on_click = &self.on_click;
-                        on_click();
+                        if !disabled {
+                            let on_click = &self.on_click;
+                            on_click();
+                        }
                         true
                     } else if self.state == ButtonState::PressedNotHovered {
                         self.state = ButtonState::Released;

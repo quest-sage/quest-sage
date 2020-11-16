@@ -1,5 +1,6 @@
 use qs_common::assets::Asset;
-use std::sync::{Arc, RwLock, atomic::AtomicBool, atomic::Ordering, Weak};
+use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, RwLock, Weak};
+use winit::event::{ElementState, MouseButton};
 
 use stretch::{
     geometry, geometry::Point, geometry::Size, node::Node, node::Stretch, number::Number,
@@ -18,6 +19,22 @@ pub trait UiElement: Send + Sync {
     /// Generates information about how to render this widget, based on the calculated layout info.
     /// Asynchronous, asset-based information must be called on a background task and just used here.
     fn generate_render_info(&self, layout: &Layout) -> MultiRenderable;
+
+    /// Processes a mouse input event.
+    /// Returns true if the event was processed, and returns false if this element cannot accept mouse click events.
+    fn process_mouse_input(&mut self, _button: MouseButton, _state: ElementState) -> bool {
+        false
+    }
+
+    /// This is called when the mouse enters the widget.
+    /// Immediately after this is called, `mouse_move` will also be called.
+    fn mouse_enter(&mut self) {}
+
+    /// This is called when the mouse moves over the widget.
+    fn mouse_move(&mut self, _pos: Point<f32>) {}
+
+    /// This is called when the mouse leaves the widget.
+    fn mouse_leave(&mut self) {}
 }
 
 impl UiElement for () {
@@ -53,6 +70,10 @@ pub struct WidgetContents {
     /// we will set this value to true. If the `Weak` cannot be upgraded, then the UI has been dropped, or
     /// this widget has not been added to a UI yet.
     force_layout_signal: Weak<AtomicBool>,
+
+    /// Is the mouse currently hovered over this widget? If so, this is the position of the mouse inside this widget
+    /// relative to this widget.
+    hover_position: Option<Point<f32>>,
 }
 
 /// Temporarily contains style information about a widget so we can lay it out.
@@ -104,6 +125,7 @@ impl Widget {
             layout: None,
             style,
             force_layout_signal: Weak::new(),
+            hover_position: None,
         })))
     }
 
@@ -152,10 +174,7 @@ impl Widget {
             layout.location.y += offset.y;
             items.push(read.element.generate_render_info(&layout));
             for child in &read.children {
-                items.push(
-                    child
-                        .generate_render_info(layout.location, debug_line_texture.clone()),
-                );
+                items.push(child.generate_render_info(layout.location, debug_line_texture.clone()));
             }
 
             if let Some(debug_line_texture) = debug_line_texture {
@@ -269,7 +288,11 @@ impl Widget {
                 })
             }
 
-            let renderable = MultiRenderable::Adjacent(items);
+            let renderable = if items.is_empty() {
+                MultiRenderable::Nothing
+            } else {
+                MultiRenderable::Adjacent(items)
+            };
 
             if read.backgrounds.is_empty() {
                 renderable
@@ -278,11 +301,77 @@ impl Widget {
                 for background in &read.backgrounds {
                     layers.push(background.generate_render_info(&layout));
                 }
-                layers.push(renderable);
-                MultiRenderable::Layered(layers)
+
+                if let MultiRenderable::Nothing = renderable {
+                } else {
+                    layers.push(renderable);
+                }
+
+                if layers.len() == 1 {
+                    layers.pop().unwrap()
+                } else {
+                    MultiRenderable::Layered(layers)
+                }
             }
         } else {
             MultiRenderable::Nothing
+        }
+    }
+
+    /// Processes a change in the mouse's position. The `pos` input is relative to the *parent widget's* coordinate system.
+    /// Emits mouse enter / mouse leave / mouse move events on widgets and children as required.
+    fn process_mouse_move(&self, pos: Point<f32>) {
+        let mut write = self.0.write().unwrap();
+        let new_hover_position = if let Some(layout) = &write.layout {
+            // The widget has been laid out so we can check if we're currently hovered over the widget.
+            let local_pos = Point {
+                x: pos.x - layout.location.x,
+                y: pos.y - layout.location.y,
+            };
+            if local_pos.x >= 0.0
+                && local_pos.x <= layout.size.width
+                && local_pos.y >= 0.0
+                && local_pos.y <= layout.size.height
+            {
+                Some(local_pos)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(new_hover_position) = new_hover_position {
+            if write.hover_position.is_none() {
+                write.element.mouse_enter();
+            }
+            write.element.mouse_move(new_hover_position);
+        }
+
+        for child in &write.children {
+            child.process_mouse_move(pos);
+        }
+
+        if new_hover_position.is_none() && write.hover_position.is_some() {
+            write.element.mouse_leave();
+        }
+
+        write.hover_position = new_hover_position;
+    }
+
+    /// Processes a mouse input event by propagating it downwards through UI elements until one of them consumes it.
+    /// Returns true if the event was processed.
+    fn process_mouse_input(&self, button: MouseButton, state: ElementState) -> bool {
+        let mut write = self.0.write().unwrap();
+        if write.element.process_mouse_input(button, state) {
+            true
+        } else {
+            for child in &write.children {
+                if child.process_mouse_input(button, state) {
+                    return true;
+                }
+            }
+            false
         }
     }
 }
@@ -294,6 +383,8 @@ pub struct UI {
     /// When a child widget calls `force_layout`, it updates this value to true.
     /// This forces the UI to recalculate its layout before its next render.
     force_layout: Arc<AtomicBool>,
+
+    mouse_position: Point<f32>,
 }
 
 impl UI {
@@ -304,6 +395,8 @@ impl UI {
             root,
             size,
             force_layout,
+
+            mouse_position: Point { x: 0.0, y: 0.0 },
         }
     }
 
@@ -344,9 +437,7 @@ impl UI {
                 .expect("could not layout");
             nodes
                 .into_iter()
-                .map(|(style, node)| {
-                    (style, *stretch.layout(node).expect("could not get layout"))
-                })
+                .map(|(style, node)| (style, *stretch.layout(node).expect("could not get layout")))
                 .collect()
         };
 
@@ -354,6 +445,19 @@ impl UI {
             let mut write = style.widget.0.write().unwrap();
             write.layout = Some(layout);
         }
+    }
+
+    /// Updates the position of the cursor.
+    /// The position must be passed relative to the UI's coordinates.
+    pub fn mouse_move(&mut self, pos: Point<f32>) {
+        self.mouse_position = pos;
+        self.root.process_mouse_move(pos);
+    }
+
+    /// Processes a mouse input event by propagating it downwards through UI elements until one of them consumes it.
+    /// Returns true if the event was processed.
+    pub fn mouse_input(&mut self, button: MouseButton, state: ElementState) -> bool {
+        self.root.process_mouse_input(button, state)
     }
 }
 

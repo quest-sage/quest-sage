@@ -1,8 +1,13 @@
 use std::sync::Arc;
 use std::time::Instant;
-use stretch::{number::Number, geometry::{Point, Size}, style::{Dimension, Style}};
+use stretch::{
+    geometry::{Point, Size},
+    number::Number,
+    style::{Dimension, Style},
+};
 use wgpu::*;
 use winit::{
+    dpi::PhysicalPosition,
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
@@ -55,6 +60,8 @@ pub struct Application {
     camera: Camera,
     ui_camera: Camera,
     multi_batch: MultiBatch,
+
+    mouse_position: PhysicalPosition<f64>,
 
     test_font_family: Arc<FontFamily>,
     /// A test widget.
@@ -243,10 +250,30 @@ impl Application {
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish().await.expect("could not complete task");
 
+        let test_button_background = Widget::new(
+            ImageElement {
+                size: Size {
+                    width: Dimension::Points(20.0),
+                    height: Dimension::Points(20.0),
+                },
+                colour: Colour::rgb(0.03, 0.03, 0.03),
+                texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+            },
+            Vec::new(),
+            Vec::new(),
+            Default::default(),
+        );
+        let test_button = Widget::new(
+            Button,
+            vec![test_button_background],
+            Vec::new(),
+            Default::default(),
+        );
+
         let root = Widget::new(
             (),
-            vec![test_text.0.read().unwrap().widget.clone()],
-            vec![Box::new(ImageWidget {
+            vec![test_text.0.read().unwrap().widget.clone(), test_button],
+            vec![Box::new(ImageElement {
                 size: Size {
                     width: Dimension::Points(100.0),
                     height: Dimension::Points(100.0),
@@ -268,10 +295,13 @@ impl Application {
             },
         );
 
-        let ui = UI::new(root, Size {
-            width: Number::Defined(100.0),
-            height: Number::Defined(100.0),
-        });
+        let ui = UI::new(
+            root,
+            Size {
+                width: Number::Defined(100.0),
+                height: Number::Defined(100.0),
+            },
+        );
 
         let mut app = Application {
             window,
@@ -293,6 +323,8 @@ impl Application {
             camera,
             ui_camera,
             multi_batch,
+
+            mouse_position: PhysicalPosition { x: 0.0, y: 0.0 },
 
             test_font_family,
             test_text,
@@ -332,6 +364,18 @@ impl Application {
         })
     }
 
+    pub fn update_cursor(&mut self, pos: PhysicalPosition<f64>) {
+        self.mouse_position = pos;
+        self.ui.mouse_move(Point {
+            x: pos.x as f32,
+            y: pos.y as f32,
+        });
+    }
+
+    pub fn mouse_input(&mut self, button: MouseButton, state: ElementState) {
+        self.ui.mouse_input(button, state);
+    }
+
     /// Renders a single frame, submitting it to the swap chain.
     pub async fn render(&mut self, mut profiler: ProfileSegmentGuard<'_>) {
         let this_frame_time = Instant::now();
@@ -340,9 +384,11 @@ impl Application {
         let _delta_seconds = delta_duration.as_secs_f32();
         self.fps_counter.tick();
 
-        
         if self.fps_counter.ticks % 100 == 0 {
-            self.test_text.set_text(Arc::clone(&self.test_font_family)).write(&format!("{} frames", self.fps_counter.ticks)).finish();
+            self.test_text
+                .set_text(Arc::clone(&self.test_font_family))
+                .write(&format!("{} frames", self.fps_counter.ticks))
+                .finish();
             tracing::trace!(
                 "{:.2} FPS",
                 1.0 / self.fps_counter.average_time().as_secs_f64()
@@ -436,15 +482,17 @@ impl Application {
             let guard = profiler.task("ui").time();
             self.multi_batch
                 .render(
-                    self.ui
-                        .generate_render_info(
-                            Point { x: self.size.width as f32 * -0.5, y: self.size.height as f32 * -0.5 },
-                            /*Some(
-                                self.texture_am
-                                    .get(AssetPath::new(vec!["white.png".to_string()])),
-                            ),*/
-                            None,
-                        ),
+                    self.ui.generate_render_info(
+                        Point {
+                            x: self.size.width as f32 * -0.5,
+                            y: self.size.height as f32 * -0.5,
+                        },
+                        /*Some(
+                            self.texture_am
+                                .get(AssetPath::new(vec!["white.png".to_string()])),
+                        ),*/
+                        None,
+                    ),
                     &frame,
                     &self.ui_camera,
                     guard,
@@ -472,6 +520,14 @@ impl Application {
                             {
                                 *control_flow = ControlFlow::Exit;
                             }
+                        }
+
+                        WindowEvent::CursorMoved { position, .. } => {
+                            self.update_cursor(position);
+                        }
+
+                        WindowEvent::MouseInput { button, state, .. } => {
+                            self.mouse_input(button, state);
                         }
 
                         WindowEvent::Resized(new_size) => self.resize(new_size, None),

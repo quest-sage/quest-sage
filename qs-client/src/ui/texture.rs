@@ -5,13 +5,13 @@ use crate::graphics::{MultiRenderable, Renderable, Texture, Vertex};
 
 use super::{Colour, UiElement};
 
-pub struct ImageWidget {
+pub struct ImageElement {
     pub size: Size<Dimension>,
     pub colour: Colour,
     pub texture: Asset<Texture>,
 }
 
-impl UiElement for ImageWidget {
+impl UiElement for ImageElement {
     fn get_size(&self) -> Size<Dimension> {
         self.size
     }

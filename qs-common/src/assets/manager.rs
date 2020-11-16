@@ -108,6 +108,12 @@ pub struct Asset<T> {
     pub data: Weak<RwLock<LoadStatus<T>>>,
 }
 
+impl<T> std::fmt::Debug for Asset<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "asset {}", self.id)
+    }
+}
+
 impl<T> PartialEq for Asset<T> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id

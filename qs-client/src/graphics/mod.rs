@@ -250,24 +250,26 @@ impl Application {
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish().await.expect("could not complete task");
 
-        let test_button_background = Widget::new(
-            ImageElement {
-                size: Size {
+        let button_style = ButtonStyle {
+            released_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+            hovered_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+            pressed_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+            disabled_texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+        };
+
+        let test_button = Widget::new(
+            Button::new(button_style, || {
+                tracing::info!("Button was clicked!");
+            }),
+            Vec::new(),
+            Vec::new(),
+            Style {
+                min_size: Size {
                     width: Dimension::Points(20.0),
                     height: Dimension::Points(20.0),
                 },
-                colour: Colour::rgb(0.03, 0.03, 0.03),
-                texture: texture_am.get(AssetPath::new(vec!["white.png".to_string()])),
+                ..Default::default()
             },
-            Vec::new(),
-            Vec::new(),
-            Default::default(),
-        );
-        let test_button = Widget::new(
-            Button,
-            vec![test_button_background],
-            Vec::new(),
-            Default::default(),
         );
 
         let root = Widget::new(

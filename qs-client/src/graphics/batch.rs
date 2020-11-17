@@ -207,7 +207,6 @@ impl Batch {
     fn flush(
         &mut self,
         frame: &SwapChainTexture,
-        encoder: &mut CommandEncoder,
 
         texture: &Texture,
 
@@ -219,7 +218,14 @@ impl Batch {
                 inds.push(0); // dummy value to align the slice to a size that is a multiple of 4 bytes
             }
 
-            let mut render = |texture: &Texture| {
+            let render = |texture: &Texture| {
+                // Create a command encoder that records our render information to be sent to the GPU.
+                let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("batch_render_encoder"),
+                });
+
                 // Describe how we want to send the texture to the GPU.
                 let texture_bind_group =
                     self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -277,14 +283,7 @@ impl Batch {
                 render_pass.draw_indexed(0..inds.len() as u32, 0, 0..1);
 
                 drop(render_pass);
-                let old_encoder = std::mem::replace(
-                    encoder,
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Render Encoder"),
-                        }),
-                );
-                self.queue.submit(std::iter::once(old_encoder.finish()));
+                self.queue.submit(std::iter::once(encoder.finish()));
             };
 
             // TODO make a default texture for unloaded textures.
@@ -302,7 +301,6 @@ impl Batch {
     fn ensure_capacity(
         &mut self,
         frame: &SwapChainTexture,
-        encoder: &mut CommandEncoder,
 
         texture: &Texture,
 
@@ -313,7 +311,7 @@ impl Batch {
         new_inds: usize,
     ) {
         if verts.len() + new_verts > MAX_VERTEX_COUNT || inds.len() + new_inds > MAX_INDEX_COUNT {
-            self.flush(frame, encoder, texture, verts, inds);
+            self.flush(frame, texture, verts, inds);
         }
     }
 
@@ -325,13 +323,6 @@ impl Batch {
         camera: &crate::graphics::Camera,
         items: impl Iterator<Item = Renderable>,
     ) {
-        // Create a command encoder that records our render information to be sent to the GPU.
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("batch_render_encoder"),
-            });
-
         // Store the vertices and indices so that we can write them to the vertex buffer and index buffer in a single function call.
         let mut verts = Vec::<Vertex>::new();
         let mut inds = Vec::<u16>::new();
@@ -344,7 +335,7 @@ impl Batch {
             match renderable {
                 Renderable::Empty => {}
                 Renderable::Triangle(v0, v1, v2) => {
-                    self.ensure_capacity(frame, &mut encoder, texture, &mut verts, &mut inds, 3, 3);
+                    self.ensure_capacity(frame, texture, &mut verts, &mut inds, 3, 3);
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -354,7 +345,7 @@ impl Batch {
                     inds.push(i0 + 2);
                 }
                 Renderable::Quadrilateral(v0, v1, v2, v3) => {
-                    self.ensure_capacity(frame, &mut encoder, texture, &mut verts, &mut inds, 4, 6);
+                    self.ensure_capacity(frame, texture, &mut verts, &mut inds, 4, 6);
                     let i0 = verts.len() as u16;
                     verts.push(v0);
                     verts.push(v1);
@@ -370,6 +361,6 @@ impl Batch {
             }
         }
 
-        self.flush(frame, &mut encoder, texture, &mut verts, &mut inds);
+        self.flush(frame, texture, &mut verts, &mut inds);
     }
 }

@@ -1,0 +1,2 @@
+# Texture Atlas
+This is a way that the build script for the Quest Sage client can communicate information about packed textures to the `qs-client` binary. Because we need it in the build script, it's separated into its own crate.

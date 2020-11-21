@@ -20,7 +20,7 @@ rusttype = { version = "0.9.2", features = ["gpu_cache"] }
 # Multithreaded runtime
 tokio = { version = "0.3", features = ["rt-multi-thread", "macros", "sync", "stream"] }
 tracing = "0.1.21"
-tracing-subscriber = "0.2.14"
+tracing-subscriber = "0.2.15"
 futures = "0.3"
 
 # Design by contract assertions
@@ -38,7 +38,13 @@ async-trait = "0.1.41"
 
 [build-dependencies]
 # GLSL to SPIR-V shader compilation utilities
-shaderc = "0.6"
+shaderc = "0.7"
 anyhow = "1.0"
 fs_extra = "1.2"
 glob = "0.3"
+
+# Texture packer
+texture_packer = { version = "0.21.1", features = [ "png" ] }
+image = "0.23"
+serde_json = "1.0"
+texture-atlas = { path = "../texture-atlas" }

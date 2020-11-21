@@ -1530,8 +1530,11 @@ dependencies = [
  "lazy_static",
  "qs-common",
  "rusttype",
+ "serde_json",
  "shaderc",
  "stretch",
+ "texture-atlas",
+ "texture_packer",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1864,9 +1867,9 @@ dependencies = [
 
 [[package]]
 name = "shaderc"
-version = "0.6.3"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50b8aeaae10b9bda5cba66736a7e265f67698e912e1cc6a4678acba286e22be9"
+checksum = "03f0cb8d1f8667fc9c50d5054be830a117af5f9a15f87c66b72bbca0c2fca484"
 dependencies = [
  "libc",
  "shaderc-sys",
@@ -1874,9 +1877,9 @@ dependencies = [
 
 [[package]]
 name = "shaderc-sys"
-version = "0.6.3"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b12d7c62d6732884c9dfab587503fa3a795b108df152415a89da23812d4737e"
+checksum = "c89175f80244b82f882033a81bd188f87307c4c39b2fe8d0f194314f270bdea9"
 dependencies = [
  "cmake",
  "libc",
@@ -1979,6 +1982,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-xid",
+]
+
+[[package]]
+name = "texture-atlas"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "texture_packer"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb33a4fd8021f9f30a7f2da815e1b0c7a3b4900ab17cff870fef2512a29dc205"
+dependencies = [
+ "image",
 ]
 
 [[package]]

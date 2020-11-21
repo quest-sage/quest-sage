@@ -1,0 +1,8 @@
+[package]
+name = "texture-atlas"
+version = "0.1.0"
+authors = ["thirdsgames <thirdsgames2018@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+serde = "1.0"

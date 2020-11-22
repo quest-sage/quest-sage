@@ -19,12 +19,12 @@ fn register_tracing_subscriber() {
 /// winit's code to be sent between threads.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     register_tracing_subscriber();
-    
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
-    
+
     let _guard = rt.enter();
     let (app, event_loop) = futures::executor::block_on(graphics::Application::new());
     app.run(event_loop);

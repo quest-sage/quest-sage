@@ -1,4 +1,7 @@
+use std::sync::{Arc, Mutex};
+
 use qs_common::assets::Asset;
+use texture_atlas::{TextureAtlas, TextureRegionInformation};
 
 use crate::ui::Colour;
 
@@ -7,6 +10,7 @@ use super::{MultiRenderable, Renderable, Vertex};
 /// Represents a texture. Encapsulates several `wgpu` and `image` operations, such
 /// as loading the image from raw bytes.
 pub struct Texture {
+    pub dimensions: (u32, u32),
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
@@ -15,7 +19,11 @@ pub struct Texture {
 // https://sotrh.github.io/learn-wgpu/beginner/tutorial5-textures/#cleaning-things-up
 impl Texture {
     /// Create a texture directly from a texture on the graphics card.
-    pub fn from_wgpu(device: &wgpu::Device, texture: wgpu::Texture) -> Self {
+    pub fn from_wgpu(
+        device: &wgpu::Device,
+        texture: wgpu::Texture,
+        dimensions: (u32, u32),
+    ) -> Self {
         Self::from_wgpu_with_sampler(
             device,
             texture,
@@ -28,6 +36,7 @@ impl Texture {
                 mipmap_filter: wgpu::FilterMode::Nearest,
                 ..Default::default()
             },
+            dimensions,
         )
     }
 
@@ -36,9 +45,11 @@ impl Texture {
         device: &wgpu::Device,
         texture: wgpu::Texture,
         desc: &wgpu::SamplerDescriptor,
+        dimensions: (u32, u32),
     ) -> Self {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
+            dimensions,
             texture,
             view,
             sampler: device.create_sampler(desc),
@@ -107,6 +118,7 @@ impl Texture {
         });
 
         Ok(Self {
+            dimensions,
             texture,
             view,
             sampler,
@@ -114,31 +126,81 @@ impl Texture {
     }
 }
 
-/// Splits a texture into nine pieces, a 3x3 grid, represented as proportions of the total width and height of the texture.
+/// Represents a texture that has been split into several regions.
+/// The regions are addressable using the texture atlas provided.
+pub struct PartitionedTexture {
+    /// The texture from which to retrieve texture regions.
+    pub base_texture: Texture,
+    /// The atlas that contains useful information about how texture regions are contained within this texture.
+    pub atlas: TextureAtlas,
+}
+
+#[derive(Debug, Copy, Clone)]
+struct InternalTextureRegionInformation {
+    /// Contains most of the info about how to render this region.
+    info: TextureRegionInformation,
+    /// The width and height of the original partitioned texture.
+    partitioned_texture_size: (u32, u32),
+}
+
+/// A smaller region of a partitioned texture. This is commonly used to refer to smaller images inside a large texture that packs them all together.
+///
+/// The info field is populated automatically on a background task when the texture has finished loading.
+#[derive(Debug, Clone)]
+pub struct TextureRegion {
+    /// The texture that this region is contained within.
+    pub partitioned_texture: Asset<PartitionedTexture>,
+
+    /// Tells us where the region is located within the base texture.
+    /// This is a mutex not a rwlock for simplicity since it'll only ever be written to once.
+    info: Arc<Mutex<Option<InternalTextureRegionInformation>>>,
+}
+
+impl TextureRegion {
+    /// Creates a new texture region as a named region of the given partitioned texture.
+    pub async fn new(partitioned_texture: Asset<PartitionedTexture>, name: String) -> Self {
+        let region = Self {
+            partitioned_texture: partitioned_texture.clone(),
+            info: Arc::new(Mutex::new(None)),
+        };
+        let cloned = region.clone();
+        partitioned_texture
+            .on_load(move |tex| match tex.atlas.frames.get(&name) {
+                Some(info) => {
+                    *cloned.info.try_lock().unwrap() = Some(InternalTextureRegionInformation {
+                        info: *info,
+                        partitioned_texture_size: tex.base_texture.dimensions,
+                    });
+                }
+                None => {
+                    tracing::error!("region {} not found in partitioned texture", name);
+                }
+            })
+            .await;
+        region
+    }
+}
+
+/// Splits a texture into nine pieces, a 3x3 grid, where the sizes of the pieces are represented using pixel measurements.
 /// The margins given should all be positive, and the totals of x-direction and y-direction margins should not exceed the total texture size.
 #[derive(Debug, Clone)]
 pub struct NinePatch {
-    pub texture: Asset<Texture>,
+    pub texture_region: TextureRegion,
 
-    pub texture_width: f32,
-    pub texture_height: f32,
-
-    pub left_margin: f32,
-    pub right_margin: f32,
-    pub top_margin: f32,
-    pub bottom_margin: f32,
+    pub left_margin: u32,
+    pub right_margin: u32,
+    pub top_margin: u32,
+    pub bottom_margin: u32,
 }
 
 impl NinePatch {
-    pub fn no_margins(texture: Asset<Texture>, width: f32, height: f32) -> Self {
+    pub fn no_margins(texture_region: TextureRegion) -> Self {
         Self {
-            texture,
-            texture_width: width,
-            texture_height: height,
-            left_margin: 0.0,
-            right_margin: 0.0,
-            top_margin: 0.0,
-            bottom_margin: 0.0,
+            texture_region,
+            left_margin: 0,
+            right_margin: 0,
+            top_margin: 0,
+            bottom_margin: 0,
         }
     }
 
@@ -153,38 +215,49 @@ impl NinePatch {
     ) -> MultiRenderable {
         // We need to create 16 vertices for the 3x3 grid.
 
+        let InternalTextureRegionInformation {
+            info: TextureRegionInformation { frame, .. },
+            partitioned_texture_size,
+        } = match *self.texture_region.info.try_lock().unwrap() {
+            Some(tex) => tex,
+            None => return MultiRenderable::Nothing,
+        };
+
+        let tex_w = partitioned_texture_size.0 as f32;
+        let tex_h = partitioned_texture_size.1 as f32;
+
         // Therefore, we have four x-positions and four y-positions for coordinates,
         // and four u-positions and v-positions for texture coordinates.
         let u_positions = [
-            0.0,
-            self.left_margin / self.texture_width,
-            1.0 - self.right_margin / self.texture_width,
-            1.0,
+            frame.x as f32 / tex_w,
+            (frame.x as f32 + self.left_margin as f32) / tex_w,
+            (frame.x as f32 + frame.w as f32 - self.right_margin as f32) / tex_w,
+            (frame.x as f32 + frame.w as f32) / tex_w,
         ];
         let v_positions = [
-            0.0,
-            self.bottom_margin / self.texture_height,
-            1.0 - self.top_margin / self.texture_height,
-            1.0,
+            frame.y as f32 / tex_h,
+            (frame.y as f32 + self.bottom_margin as f32) / tex_h,
+            (frame.y as f32 + frame.h as f32 - self.top_margin as f32) / tex_h,
+            (frame.y as f32 + frame.h as f32) / tex_h,
         ];
 
         let x_positions = [
             x,
-            x + self.left_margin,
-            x + width - self.right_margin,
+            x + self.left_margin as f32,
+            x + width - self.right_margin as f32,
             x + width,
         ];
         let y_positions = [
             y,
-            y + self.bottom_margin,
-            y + height - self.top_margin,
+            y + self.bottom_margin as f32,
+            y + height - self.top_margin as f32,
             y + height,
         ];
 
         let color = colour.into();
 
-        MultiRenderable::Image {
-            texture: self.texture.clone(),
+        MultiRenderable::ImageRegion {
+            texture: self.texture_region.clone(),
             renderables: [
                 (0, 0),
                 (0, 1),

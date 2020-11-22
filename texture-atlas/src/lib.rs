@@ -14,7 +14,7 @@ pub struct TextureAtlas {
 }
 
 /// Roughly corresponds to [texture_packer::Frame].
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct TextureRegionInformation {
     /// Rectangle describing the texture coordinates and size.
     pub frame: Rect,

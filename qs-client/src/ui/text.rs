@@ -243,9 +243,7 @@ impl RichTextContents {
                     let words: Vec<_> = paragraph
                         .0
                         .into_iter()
-                        .map(|word| {
-                            Widget::new(word, Vec::new(), Vec::new(), Default::default())
-                        })
+                        .map(|word| Widget::new(word, Vec::new(), Vec::new(), Default::default()))
                         .collect();
                     Widget::new(
                         RichTextWidgetContainer,
@@ -422,14 +420,17 @@ impl RichTextContentsBuilder {
             paragraphs.push(self.current_paragraph);
         }
         let output = self.output;
-        tokio::spawn(Abortable::new(async move {
-            // We clone the paragraph data here so that the background thread can't cause the main thread to halt.
-            let paragraphs_cloned = paragraphs.clone();
-            let typeset_text = typeset_rich_text(paragraphs_cloned).await;
+        tokio::spawn(Abortable::new(
+            async move {
+                // We clone the paragraph data here so that the background thread can't cause the main thread to halt.
+                let paragraphs_cloned = paragraphs.clone();
+                let typeset_text = typeset_rich_text(paragraphs_cloned).await;
 
-            let mut rich_text = output.0.write().unwrap();
-            rich_text.write(paragraphs, typeset_text);
-        }, self.abort_registration))
+                let mut rich_text = output.0.write().unwrap();
+                rich_text.write(paragraphs, typeset_text);
+            },
+            self.abort_registration,
+        ))
     }
 }
 

@@ -36,6 +36,10 @@ stretch = "0.3.2"
 lazy_static = "1.4"
 async-trait = "0.1.41"
 
+# Texture packer
+serde_json = "1.0"
+texture-atlas = { path = "../texture-atlas" }
+
 [build-dependencies]
 # GLSL to SPIR-V shader compilation utilities
 shaderc = "0.7"

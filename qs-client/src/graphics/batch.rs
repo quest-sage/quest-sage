@@ -220,11 +220,11 @@ impl Batch {
 
             let render = |texture: &Texture| {
                 // Create a command encoder that records our render information to be sent to the GPU.
-                let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("batch_render_encoder"),
-                });
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("batch_render_encoder"),
+                        });
 
                 // Describe how we want to send the texture to the GPU.
                 let texture_bind_group =

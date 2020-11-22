@@ -1,8 +1,8 @@
 use crate::graphics::Batch;
 use crate::ui::*;
 use rusttype::gpu_cache::Cache;
-use stretch::geometry::Point;
 use std::sync::Arc;
+use stretch::geometry::Point;
 use wgpu::*;
 
 use super::{Renderable, Vertex};
@@ -86,6 +86,7 @@ impl TextRenderer {
                 mipmap_filter: wgpu::FilterMode::Nearest,
                 ..Default::default()
             },
+            (cache_width, cache_height),
         );
 
         Self {
@@ -93,7 +94,6 @@ impl TextRenderer {
             batch,
 
             //scale_factor,
-
             cache,
             font_texture,
 
@@ -159,7 +159,8 @@ impl TextRenderer {
             //let _guard = profiler.task("creating texture coordinates").time();
             /*if self.cache_generation == cache_generation && self.cached_renderables.is_some() {
                 items = self.cached_renderables.as_ref().unwrap().clone();
-            } else */{
+            } else */
+            {
                 for (offset, word) in text {
                     for RenderableGlyph {
                         font,
@@ -167,15 +168,22 @@ impl TextRenderer {
                         glyph,
                     } in &word.glyphs
                     {
-                        if let Some((uv_rect, pixel_rect)) = self.cache
+                        if let Some((uv_rect, pixel_rect)) = self
+                            .cache
                             .rect_for(*font, glyph)
                             .expect("Could not load cache entry for glyph")
                         {
                             // TODO this includes the height of descenders of glyphs, which is not intended!
                             // This displays text slightly too low!
                             let line_height = word.size.1 as f32;
-                            let (x1, y1) = (pixel_rect.min.x as f32 + offset.x, -pixel_rect.min.y as f32 - line_height - offset.y);
-                            let (x2, y2) = (pixel_rect.max.x as f32 + offset.x, -pixel_rect.max.y as f32 - line_height - offset.y);
+                            let (x1, y1) = (
+                                pixel_rect.min.x as f32 + offset.x,
+                                -pixel_rect.min.y as f32 - line_height - offset.y,
+                            );
+                            let (x2, y2) = (
+                                pixel_rect.max.x as f32 + offset.x,
+                                -pixel_rect.max.y as f32 - line_height - offset.y,
+                            );
                             let (u1, v1) = (uv_rect.min.x, uv_rect.min.y);
                             let (u2, v2) = (uv_rect.max.x, uv_rect.max.y);
                             let color = (*colour).into();
@@ -212,12 +220,7 @@ impl TextRenderer {
         {
             //let _guard = profiler.task("rendering text").time();
             self.batch
-                .render(
-                    frame,
-                    &self.font_texture,
-                    camera,
-                    items.into_iter(),
-                );
+                .render(frame, &self.font_texture, camera, items.into_iter());
         }
     }
 }

@@ -102,13 +102,16 @@ fn render_filename(path: &Path) -> String {
             }
             std::path::Component::Normal(name) => name.to_str().unwrap().to_string(),
         })
-        .fold(String::new(), |l, r| {
-            if l.is_empty() {
-                r
-            } else {
-                l + "/" + &r
-            }
-        })
+        .fold(
+            String::new(),
+            |l, r| {
+                if l.is_empty() {
+                    r
+                } else {
+                    l + "/" + &r
+                }
+            },
+        )
 }
 
 fn pack_textures() -> Result<()> {

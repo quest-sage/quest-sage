@@ -14,7 +14,10 @@ use winit::{
 };
 
 use crate::{
-    assets::{FontAssetLoader, TextureAssetLoader},
+    assets::{
+        FontAssetLoader, PartitionedTextureAssetLoader, PartitionedTextureAtlasPaths,
+        TextureAssetLoader,
+    },
     ui::*,
 };
 use qs_common::profile::InterpolatedStopwatch;
@@ -56,6 +59,11 @@ pub struct Application {
     fps_counter: InterpolatedStopwatch,
 
     texture_am: AssetManager<AssetPath, Texture, TextureAssetLoader>,
+    _partitioned_texture_am: AssetManager<
+        PartitionedTextureAtlasPaths,
+        PartitionedTexture,
+        PartitionedTextureAssetLoader,
+    >,
     _font_am: AssetManager<AssetPath, rusttype::Font<'static>, FontAssetLoader>,
     camera: Camera,
     ui_camera: Camera,
@@ -192,6 +200,11 @@ impl Application {
             Arc::clone(&queue),
         ));
 
+        let mut partitioned_texture_am = AssetManager::new(PartitionedTextureAssetLoader::new(
+            Arc::clone(&device),
+            Arc::clone(&queue),
+        ));
+
         let mut font_am = AssetManager::new(FontAssetLoader::default());
 
         let text_renderer = TextRenderer::new(
@@ -250,54 +263,47 @@ impl Application {
         .write("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut facilisis elit at massa placerat, in placerat est pretium. Curabitur consequat porta ante vel pharetra. Vestibulum sit amet mauris rhoncus, facilisis felis et, elementum arcu. In hac habitasse platea dictumst. Nam at felis non lectus aliquam consectetur nec quis tellus. Proin id dictum massa. Sed id condimentum mauris. Morbi eget dictum ligula, non faucibus ante. Morbi viverra ut diam vitae malesuada. Donec porta enim non porttitor euismod. Proin faucibus sit amet diam nec molestie. Fusce porta scelerisque lectus, quis ultrices augue maximus a.")
         .finish().await.expect("could not complete task");
 
+        let ui_atlas = partitioned_texture_am.get(PartitionedTextureAtlasPaths {
+            texture: AssetPath::new(vec!["ui".to_string(), "atlas.png".to_string()]),
+            atlas: AssetPath::new(vec!["ui".to_string(), "atlas.json".to_string()]),
+        });
+
+        let tr_button = TextureRegion::new(ui_atlas.clone(), "button.png".to_string()).await;
+        let tr_button_hovered =
+            TextureRegion::new(ui_atlas.clone(), "button_hovered.png".to_string()).await;
+        let tr_button_pressed =
+            TextureRegion::new(ui_atlas.clone(), "button_pressed.png".to_string()).await;
+        let tr_button_disabled =
+            TextureRegion::new(ui_atlas.clone(), "button_disabled.png".to_string()).await;
+
         let button_style = ButtonStyle {
             released_texture: NinePatch {
-                texture: texture_am.get(AssetPath::new(vec![
-                    "ui".to_string(),
-                    "button.png".to_string(),
-                ])),
-                texture_width: 8.0,
-                texture_height: 8.0,
-                left_margin: 2.0,
-                right_margin: 2.0,
-                top_margin: 2.0,
-                bottom_margin: 2.0,
+                texture_region: tr_button,
+                left_margin: 2,
+                right_margin: 2,
+                top_margin: 2,
+                bottom_margin: 2,
             },
             hovered_texture: NinePatch {
-                texture: texture_am.get(AssetPath::new(vec![
-                    "ui".to_string(),
-                    "button_hovered.png".to_string(),
-                ])),
-                texture_width: 8.0,
-                texture_height: 8.0,
-                left_margin: 2.0,
-                right_margin: 2.0,
-                top_margin: 2.0,
-                bottom_margin: 2.0,
+                texture_region: tr_button_hovered,
+                left_margin: 2,
+                right_margin: 2,
+                top_margin: 2,
+                bottom_margin: 2,
             },
             pressed_texture: NinePatch {
-                texture: texture_am.get(AssetPath::new(vec![
-                    "ui".to_string(),
-                    "button_pressed.png".to_string(),
-                ])),
-                texture_width: 8.0,
-                texture_height: 8.0,
-                left_margin: 2.0,
-                right_margin: 2.0,
-                top_margin: 2.0,
-                bottom_margin: 2.0,
+                texture_region: tr_button_pressed,
+                left_margin: 2,
+                right_margin: 2,
+                top_margin: 2,
+                bottom_margin: 2,
             },
             disabled_texture: NinePatch {
-                texture: texture_am.get(AssetPath::new(vec![
-                    "ui".to_string(),
-                    "button_disabled.png".to_string(),
-                ])),
-                texture_width: 8.0,
-                texture_height: 8.0,
-                left_margin: 2.0,
-                right_margin: 2.0,
-                top_margin: 2.0,
-                bottom_margin: 2.0,
+                texture_region: tr_button_disabled,
+                left_margin: 2,
+                right_margin: 2,
+                top_margin: 2,
+                bottom_margin: 2,
             },
         };
 
@@ -365,6 +371,7 @@ impl Application {
             fps_counter: InterpolatedStopwatch::new(100),
 
             texture_am,
+            _partitioned_texture_am: partitioned_texture_am,
             _font_am: font_am,
             camera,
             ui_camera,

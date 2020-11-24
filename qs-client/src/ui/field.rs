@@ -22,6 +22,14 @@ struct FieldElement {
     rich_text: RichText,
     /// The texture to draw the cursor with.
     caret_texture: NinePatch,
+
+    /// The position and size of the caret relative to this widget, if this widget has keyboard focus.
+    caret_position: Option<Caret>,
+}
+
+struct Caret {
+    pos: (f32, f32),
+    height: f32,
 }
 
 impl UiElement for FieldElement {
@@ -30,13 +38,17 @@ impl UiElement for FieldElement {
     }
 
     fn generate_render_info(&self, layout: &stretch::result::Layout) -> MultiRenderable {
-        self.caret_texture.generate_render_info(
-            Colour::WHITE,
-            layout.location.x,
-            -layout.location.y - 10.0,
-            10.0,
-            10.0,
-        )
+        if let Some(Caret { pos: (x, y), height }) = self.caret_position {
+            self.caret_texture.generate_render_info(
+                Colour::WHITE,
+                layout.location.x + x - 2.0,
+                -layout.location.y - y - height + 1.0,
+                5.0,
+                height - 2.0,
+            )
+        } else {
+            MultiRenderable::Nothing
+        }
     }
 
     fn mouse_move(&mut self, pos: Point<f32>) {
@@ -105,6 +117,11 @@ impl UiElement for FieldElement {
                                     // Now, `closest_anchor_point_index` is the index of the glyph before which our cursor should go,
                                     // and `closest_anchor_point_x_position` is the x-position that the caret should be rendered at.
                                     tracing::trace!("Cursor is at {} ({})", closest_anchor_point_index, closest_anchor_point_x_position);
+                                    let caret = Caret {
+                                        pos: (closest_anchor_point_x_position + word_layout.location.x, word_layout.location.y),
+                                        height: word_layout.size.height,
+                                    };
+                                    self.caret_position = Some(caret);
                                 }
 
                                 // Don't check any other words, we've computed which one we're hovering over already.
@@ -132,6 +149,7 @@ impl Field {
         let field_element = FieldElement {
             rich_text: rich_text.clone(),
             caret_texture,
+            caret_position: None,
         };
         let widget = Widget::new(
             field_element,

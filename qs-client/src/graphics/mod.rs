@@ -275,7 +275,7 @@ impl Application {
             TextureRegion::new(ui_atlas.clone(), "button_pressed.png".to_string()).await;
         let tr_button_disabled =
             TextureRegion::new(ui_atlas.clone(), "button_disabled.png".to_string()).await;
-        let tr_caret = TextureRegion::new(ui_atlas.clone(), "button.png".to_string()).await;
+        let tr_caret = TextureRegion::new(ui_atlas.clone(), "caret.png".to_string()).await;
 
         let button_style = ButtonStyle {
             released_texture: NinePatch {
@@ -326,8 +326,8 @@ impl Application {
         let test_field = Field::new(
             NinePatch {
                 texture_region: tr_caret,
-                left_margin: 2,
-                right_margin: 2,
+                left_margin: 1,
+                right_margin: 1,
                 top_margin: 2,
                 bottom_margin: 2,
             },

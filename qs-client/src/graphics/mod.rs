@@ -275,6 +275,7 @@ impl Application {
             TextureRegion::new(ui_atlas.clone(), "button_pressed.png".to_string()).await;
         let tr_button_disabled =
             TextureRegion::new(ui_atlas.clone(), "button_disabled.png".to_string()).await;
+        let tr_caret = TextureRegion::new(ui_atlas.clone(), "button.png".to_string()).await;
 
         let button_style = ButtonStyle {
             released_texture: NinePatch {
@@ -322,9 +323,22 @@ impl Application {
             },
         );
 
+        let test_field = Field::new(
+            NinePatch {
+                texture_region: tr_caret,
+                left_margin: 2,
+                right_margin: 2,
+                top_margin: 2,
+                bottom_margin: 2,
+            },
+            Arc::clone(&test_font_family),
+            Default::default(),
+            Default::default(),
+        );
+
         let root = Widget::new(
             (),
-            vec![test_text.0.read().unwrap().widget.clone(), test_button],
+            vec![test_text.get_widget(), test_button, test_field.get_widget()],
             vec![Box::new(ImageElement {
                 size: Size {
                     width: Dimension::Points(100.0),

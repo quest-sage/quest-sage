@@ -8,7 +8,7 @@ use stretch::geometry::Size;
 use stretch::style::*;
 use tokio::task::JoinHandle;
 
-use super::{Colour, UiElement, Widget};
+use super::{Colour, UiElement, Widget, WidgetID};
 
 static FONT_FACE_ID_COUNTER: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(1);
@@ -153,6 +153,7 @@ impl RichText {
             paragraphs: Vec::new(),
             widget,
             typeset_abort_handle: None,
+            word_info: HashMap::new(),
         })))
     }
 
@@ -171,6 +172,17 @@ impl RichText {
             is_internal: false,
             abort_registration,
         }
+    }
+
+    /// Returns the widget that this rich text object is managing.
+    /// This is essentially clone of an `Arc`, so lifetimes are irrelevant.
+    pub fn get_widget(&self) -> Widget {
+        self.0.read().unwrap().widget.clone()
+    }
+
+    /// Gets the word info for a `RenderableWord` widget contained within this rich text object.
+    pub fn get_word_info(&self, widget_id: WidgetID) -> Option<WordInfo> {
+        self.0.read().unwrap().word_info.get(&widget_id).cloned()
     }
 }
 
@@ -206,6 +218,32 @@ impl UiElement for RenderableWord {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct WordInfo {
+    pub glyphs: Vec<GlyphInfo>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct GlyphInfo {
+    pub bounding_box: Option<rusttype::Rect<i32>>,
+}
+
+impl From<&RenderableWord> for WordInfo {
+    fn from(renderable: &RenderableWord) -> Self {
+        Self {
+            glyphs: renderable.glyphs.iter().map(|glyph| glyph.into()).collect(),
+        }
+    }
+}
+
+impl From<&RenderableGlyph> for GlyphInfo {
+    fn from(renderable: &RenderableGlyph) -> Self {
+        Self {
+            bounding_box: renderable.glyph.pixel_bounding_box(),
+        }
+    }
+}
+
 /// Represents text that may be styled with colours and other formatting, such as bold and italic letters.
 /// The text is assumed to live inside an infinitely tall rectangle of a given maximum width.
 /// If this rich text is being used in a label (one line of text), the list of paragraphs should contain only one element.
@@ -215,6 +253,10 @@ pub struct RichTextContents {
     /// identical formatting. In particular, rich text segments are typeset individually without regard to the rest
     /// of the paragraph or the text in general. Then, the segments are "glued together" to form the paragraph.
     paragraphs: Vec<RichTextParagraph>,
+
+    /// Contains information about each glyph in each `RenderableWord`.
+    /// The keys to this map are the widgets containing the `RenderableWord` objects.
+    word_info: HashMap<WidgetID, WordInfo>,
 
     /// The widget representing the actual typeset rich text.
     /// The root element is a RichTextWidgetContainer, containing some RenderableWord children.
@@ -230,34 +272,41 @@ pub struct RichTextContents {
 impl RichTextContents {
     fn write(&mut self, paragraphs: Vec<RichTextParagraph>, typeset: TypesetText) {
         self.paragraphs = paragraphs;
-        // TODO invalidate hierarchy, force re-layout
-        let cloned = self.widget.clone();
-        tokio::task::spawn(async move {
-            // Construct the widget hierarchy.
-            let mut write = cloned.0.write().unwrap();
-            write.clear_children();
-            typeset
-                .paragraphs
-                .into_iter()
-                .map(|paragraph| {
-                    let words: Vec<_> = paragraph
-                        .0
-                        .into_iter()
-                        .map(|word| Widget::new(word, Vec::new(), Vec::new(), Default::default()))
-                        .collect();
-                    Widget::new(
-                        RichTextWidgetContainer,
-                        words,
-                        Vec::new(),
-                        Style {
-                            flex_wrap: FlexWrap::Wrap,
-                            align_items: AlignItems::FlexEnd,
-                            ..Default::default()
-                        },
-                    )
-                })
-                .for_each(|item| write.add_child(item));
-        });
+        self.word_info.clear();
+
+        // Construct the widget hierarchy.
+        let mut write = self.widget.0.write().unwrap();
+        let word_info_map = &mut self.word_info;
+        write.clear_children();
+        typeset
+            .paragraphs
+            .into_iter()
+            .map(|paragraph| {
+                let words: Vec<_> = paragraph
+                    .0
+                    .into_iter()
+                    .map(|word| {
+                        // Cache the word's information so we can record where each glyph lies within the word widget.
+                        let word_info = WordInfo::from(&word);
+                        let widget = Widget::new(word, Vec::new(), Vec::new(), Default::default());
+                        let widget_id = widget.0.read().unwrap().get_id();
+                        word_info_map.insert(widget_id, word_info);
+                        widget
+                    })
+                    .collect();
+                Widget::new(
+                    RichTextWidgetContainer,
+                    words,
+                    Vec::new(),
+                    Style {
+                        flex_wrap: FlexWrap::Wrap,
+                        align_items: AlignItems::FlexEnd,
+                        ..Default::default()
+                    },
+                )
+            })
+            .for_each(|item| write.add_child(item));
+        write.force_layout();
     }
 }
 
@@ -406,7 +455,8 @@ impl RichTextContentsBuilder {
         self
     }
 
-    /// Writes the output of this builder to the rich text struct.
+    /// Writes the output of this builder to the rich text struct. Returns a handle to the task that is typesetting the text.
+    /// To wait until typesetting is finished, `.await` on this handle.
     ///
     /// # Panics
     /// If this is an internal builder (e.g. produced by the `h1` function), this will panic.

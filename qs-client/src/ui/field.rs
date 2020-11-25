@@ -4,6 +4,7 @@ use stretch::{
     geometry::{Point, Size},
     style::{Dimension, Style},
 };
+use winit::event::{ElementState, MouseButton};
 
 use crate::graphics::{MultiRenderable, NinePatch};
 
@@ -58,6 +59,23 @@ impl UiElement for FieldElement {
 
     fn mouse_move(&mut self, pos: Point<f32>) {
         tracing::trace!("Caret: {:#?}", self.get_caret_position(pos));
+    }
+
+    fn process_mouse_input(&mut self, button: MouseButton, state: ElementState) -> MouseInputProcessResult {
+        if button == MouseButton::Left {
+            match state {
+                ElementState::Pressed => {
+                    MouseInputProcessResult::TakeKeyboardFocus
+                }
+                ElementState::Released => {
+                    // Don't let child widgets process this event.
+                    MouseInputProcessResult::Processed
+                }
+            }
+        } else {
+            // Maybe add right-click events later?
+            MouseInputProcessResult::NotProcessed
+        }
     }
 }
 

@@ -21,9 +21,8 @@ pub trait UiElement: Send + Sync {
     fn generate_render_info(&self, layout: &Layout) -> MultiRenderable;
 
     /// Processes a mouse input event.
-    /// Returns true if the event was processed, and returns false if this element cannot accept mouse click events.
-    fn process_mouse_input(&mut self, _button: MouseButton, _state: ElementState) -> bool {
-        false
+    fn process_mouse_input(&mut self, _button: MouseButton, _state: ElementState) -> MouseInputProcessResult {
+        MouseInputProcessResult::NotProcessed
     }
 
     /// This is called when the mouse enters the widget.
@@ -35,6 +34,24 @@ pub trait UiElement: Send + Sync {
 
     /// This is called when the mouse leaves the widget.
     fn mouse_leave(&mut self) {}
+
+    /// This is called when we gain keyboard focus, for example after [`TakeKeyboardFocus`](MouseInputProcessResult::TakeKeyboardFocus)
+    /// was returned from this widget's `process_mouse_input` method.
+    fn gain_keyboard_focus(&mut self) {}
+
+    /// This is called when we lose keyboard focus, for example when another widget gains keyboard focus or we surrender it.
+    fn lose_keyboard_focus(&mut self) {}
+}
+
+/// What was the result of clicking a UI element?
+pub enum MouseInputProcessResult {
+    /// The event was not processed. Propagate the event to child widgets.
+    NotProcessed,
+    /// The event was processed and no further things happen.
+    Processed,
+    /// This widget takes focus of the keyboard; key input events are sent to this widget only.
+    /// This will call `lose_keyboard_focus` on the currently-focused widget if it exists, and `gain_keyboard_focus` on this widget.
+    TakeKeyboardFocus,
 }
 
 /// If we don't want to specify a UI element, just use the unit type.
@@ -77,10 +94,9 @@ pub struct WidgetContents {
     layout: Option<Layout>,
     style: Style,
 
-    /// When we want to update the UI's layout (e.g. after changing some setting like text contents),
-    /// we will set this value to true. If the `Weak` cannot be upgraded, then the UI has been dropped, or
-    /// this widget has not been added to a UI yet.
-    force_layout_signal: Weak<AtomicBool>,
+    /// Essentially a reference to the UI that this widget is contained within.
+    /// This allows us to perform operations over the entire UI, such as changing the focus of the keyboard.
+    ui_reference: UiReference,
 
     /// Is the mouse currently hovered over this widget? If so, this is the position of the mouse inside this widget
     /// relative to this widget.
@@ -89,6 +105,20 @@ pub struct WidgetContents {
     /// A globally unique identifier among all widgets in an app. Generated automatically when created.
     id: WidgetID,
 }
+
+struct UiStatus {
+    /// When we want to update the UI's layout (e.g. after changing some setting like text contents),
+    /// we will set this value to true.
+    /// This forces the UI to recalculate its layout before its next render.
+    force_layout_signal: AtomicBool,
+
+    /// The widget behind this reference is the one which currently has the keyboard's focus, if any widget at all even has focus.
+    keyboard_focused_widget: RwLock<Option<Widget>>,
+}
+
+/// If the `Weak` cannot be upgraded, then the UI has been dropped, or
+/// this widget has not been added to a UI yet.
+type UiReference = Weak<UiStatus>;
 
 /// Temporarily contains style information about a widget so we can lay it out.
 struct WidgetStyle {
@@ -107,8 +137,8 @@ impl WidgetContents {
 
     /// Request that the UI updates the layout next time we render it.
     pub fn force_layout(&self) {
-        if let Some(signal) = self.force_layout_signal.upgrade() {
-            signal.store(true, Ordering::Relaxed);
+        if let Some(ui_status) = self.ui_reference.upgrade() {
+            ui_status.force_layout_signal.store(true, Ordering::Relaxed);
         }
         // Otherwise, the widget was not part of a UI, or the UI containing this widget was dropped
     }
@@ -119,7 +149,7 @@ impl WidgetContents {
     }
 
     pub fn add_child(&mut self, widget: Widget) {
-        widget.update_force_layout_signal(Weak::clone(&self.force_layout_signal));
+        widget.update_ui_reference(self.ui_reference.clone());
         self.children.push(widget);
         self.force_layout();
     }
@@ -152,18 +182,20 @@ impl Widget {
             backgrounds,
             layout: None,
             style,
-            force_layout_signal: Weak::new(),
+            ui_reference: Default::default(),
             hover_position: None,
             id: new_widget_id(),
         })))
     }
 
-    fn update_force_layout_signal(&self, force_layout_signal: Weak<AtomicBool>) {
+    /// Updates which UI we are inside.
+    /// This is called when this widget or a parent is added to a UI, or added to a widget which itself is in a UI.
+    fn update_ui_reference(&self, ui_reference: UiReference) {
         let mut write = self.0.write().unwrap();
         for child in &write.children {
-            child.update_force_layout_signal(Weak::clone(&force_layout_signal));
+            child.update_ui_reference(ui_reference.clone());
         }
-        write.force_layout_signal = force_layout_signal;
+        write.ui_reference = ui_reference;
     }
 
     /// Generates stretch node information for this node and children nodes.
@@ -393,16 +425,26 @@ impl Widget {
     /// Returns true if the event was processed.
     fn process_mouse_input(&self, button: MouseButton, state: ElementState) -> bool {
         let mut write = self.0.write().unwrap();
-        if write.element.process_mouse_input(button, state) {
-            true
-        } else {
-            for child in &write.children {
-                if child.process_mouse_input(button, state) {
-                    return true;
+        match write.element.process_mouse_input(button, state) {
+            MouseInputProcessResult::NotProcessed => {
+                for child in &write.children {
+                    if child.process_mouse_input(button, state) {
+                        return true;
+                    }
                 }
+                false
             }
-            false
+            MouseInputProcessResult::Processed => true,
+            MouseInputProcessResult::TakeKeyboardFocus => {
+                self.take_keyboard_focus(&mut write);
+                true
+            }
         }
+    }
+
+    /// Call this to invoke event-handling code for when a widget gains keyboard focus.
+    fn take_keyboard_focus(&self, widget_contents: &mut WidgetContents) {
+
     }
 }
 
@@ -410,21 +452,24 @@ impl Widget {
 pub struct UI {
     root: Widget,
     size: Size<Number>,
-    /// When a child widget calls `force_layout`, it updates this value to true.
-    /// This forces the UI to recalculate its layout before its next render.
-    force_layout: Arc<AtomicBool>,
+
+    ui_status: Arc<UiStatus>,
 
     mouse_position: Point<f32>,
 }
 
 impl UI {
     pub fn new(root: Widget, size: Size<Number>) -> Self {
-        let force_layout = Arc::new(AtomicBool::new(true));
-        root.update_force_layout_signal(Arc::downgrade(&force_layout));
+        let ui_status = Arc::new(UiStatus {
+            force_layout_signal: AtomicBool::new(true),
+            keyboard_focused_widget: RwLock::new(None),
+        });
+        root.update_ui_reference(Arc::downgrade(&ui_status));
+
         Self {
             root,
             size,
-            force_layout,
+            ui_status,
 
             mouse_position: Point { x: 0.0, y: 0.0 },
         }
@@ -432,7 +477,7 @@ impl UI {
 
     pub fn update_size(&mut self, size: Size<Number>) {
         self.size = size;
-        self.force_layout.store(true, Ordering::Relaxed);
+        self.ui_status.force_layout_signal.store(true, Ordering::Relaxed);
     }
 
     /// Generates a `MultiRenderable` so that we can render this UI.

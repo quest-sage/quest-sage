@@ -8,7 +8,7 @@ use winit::event::{ElementState, MouseButton};
 
 use crate::graphics::{MultiRenderable, NinePatch};
 
-use super::{Colour, UiElement};
+use super::{Colour, MouseInputProcessResult, UiElement};
 
 pub struct Button {
     style: ButtonStyle,
@@ -92,9 +92,11 @@ impl UiElement for Button {
         )
     }
 
-    fn process_mouse_input(&mut self, button: MouseButton, state: ElementState) -> bool {
+    fn process_mouse_input(&mut self, button: MouseButton, state: ElementState) -> MouseInputProcessResult {
         let disabled = self.disabled.load(Ordering::Relaxed);
 
+        // The button takes keyboard focus so that other UI elements, for instance fields, are required to give up their focus
+        // when the button is clicked.
         if let MouseButton::Left = button {
             match state {
                 ElementState::Pressed => {
@@ -102,9 +104,9 @@ impl UiElement for Button {
                         if !disabled {
                             self.state = ButtonState::Pressed;
                         }
-                        true
+                        MouseInputProcessResult::TakeKeyboardFocus
                     } else {
-                        false
+                        MouseInputProcessResult::NotProcessed
                     }
                 }
                 ElementState::Released => {
@@ -114,17 +116,17 @@ impl UiElement for Button {
                             let on_click = &self.on_click;
                             on_click();
                         }
-                        true
+                        MouseInputProcessResult::TakeKeyboardFocus
                     } else if self.state == ButtonState::PressedNotHovered {
                         self.state = ButtonState::Released;
-                        false
+                        MouseInputProcessResult::NotProcessed
                     } else {
-                        false
+                        MouseInputProcessResult::NotProcessed
                     }
                 }
             }
         } else {
-            false
+            MouseInputProcessResult::NotProcessed
         }
     }
 

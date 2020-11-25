@@ -27,8 +27,13 @@ struct FieldElement {
     caret_position: Option<Caret>,
 }
 
+#[derive(Debug)]
 struct Caret {
+    /// The index in the `contents` string that the caret is at.
+    edit_index: usize,
+    /// The position to render the caret.
     pos: (f32, f32),
+    /// The height in pixels to render the caret.
     height: f32,
 }
 
@@ -38,7 +43,7 @@ impl UiElement for FieldElement {
     }
 
     fn generate_render_info(&self, layout: &stretch::result::Layout) -> MultiRenderable {
-        if let Some(Caret { pos: (x, y), height }) = self.caret_position {
+        if let Some(Caret { pos: (x, y), height, .. }) = self.caret_position {
             self.caret_texture.generate_render_info(
                 Colour::WHITE,
                 layout.location.x + x - 2.0,
@@ -52,6 +57,13 @@ impl UiElement for FieldElement {
     }
 
     fn mouse_move(&mut self, pos: Point<f32>) {
+        tracing::trace!("Caret: {:#?}", self.get_caret_position(pos));
+    }
+}
+
+impl FieldElement {
+    /// Returns the position of the caret when the mouse is hovered over the given point.
+    fn get_caret_position(&self, pos: Point<f32>) -> Option<Caret> {
         let widget = self.rich_text.get_widget();
         let paragraphs = widget.0.read().unwrap();
         // Check where the mouse is hovering over.
@@ -116,25 +128,27 @@ impl UiElement for FieldElement {
 
                                     // Now, `closest_anchor_point_index` is the index of the glyph before which our cursor should go,
                                     // and `closest_anchor_point_x_position` is the x-position that the caret should be rendered at.
-                                    tracing::trace!("Cursor is at {} ({})", closest_anchor_point_index, closest_anchor_point_x_position);
                                     let caret = Caret {
+                                        edit_index: closest_anchor_point_index,
                                         pos: (closest_anchor_point_x_position + word_layout.location.x, word_layout.location.y),
                                         height: word_layout.size.height,
                                     };
-                                    self.caret_position = Some(caret);
+                                    return Some(caret);
                                 }
 
                                 // Don't check any other words, we've computed which one we're hovering over already.
-                                break;
+                                return None;
                             }
                         }
                     }
 
                     // Don't check any other paragraphs, we've computed which one we're hovering over already.
-                    break;
+                    return None;
                 }
             }
         }
+
+        None
     }
 }
 

@@ -92,13 +92,13 @@ impl UiElement for FieldElement {
                                     let mut closest_anchor_point_index = 0;
                                     let mut closest_anchor_point_x_position = 0.0;
                                     let mut closest_anchor_point_distance = f32::MAX;
-                                    for (glyph, i) in word_info.glyphs.into_iter().zip(0..) {
+                                    for glyph in word_info.glyphs {
                                         if let Some(bounding_box) = glyph.bounding_box {
                                             // Evaluate the left edge if this is the first glyph with a bounding box (i.e. we haven't updated the closest point yet).
                                             if closest_anchor_point_distance == f32::MAX {
                                                 let distance = (bounding_box.min.x as f32 - local_x).abs();
                                                 if distance < closest_anchor_point_distance {
-                                                    closest_anchor_point_index = i;
+                                                    closest_anchor_point_index = glyph.character_index;
                                                     closest_anchor_point_x_position = bounding_box.min.x as f32;
                                                     closest_anchor_point_distance = distance;
                                                 }
@@ -107,7 +107,7 @@ impl UiElement for FieldElement {
                                             // Evaluate the right edge.
                                             let distance = (bounding_box.max.x as f32 - local_x).abs();
                                             if distance < closest_anchor_point_distance {
-                                                closest_anchor_point_index = i + 1;
+                                                closest_anchor_point_index = glyph.character_index + 1;
                                                 closest_anchor_point_x_position = bounding_box.max.x as f32;
                                                 closest_anchor_point_distance = distance;
                                             }

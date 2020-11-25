@@ -166,6 +166,7 @@ impl TextRenderer {
                         font,
                         colour,
                         glyph,
+                        ..
                     } in &word.glyphs
                     {
                         if let Some((uv_rect, pixel_rect)) = self

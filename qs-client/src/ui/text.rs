@@ -226,6 +226,8 @@ pub struct WordInfo {
 #[derive(Debug, Copy, Clone)]
 pub struct GlyphInfo {
     pub bounding_box: Option<rusttype::Rect<i32>>,
+    /// This is the index of the character in the original text.
+    pub character_index: usize,
 }
 
 impl From<&RenderableWord> for WordInfo {
@@ -240,6 +242,7 @@ impl From<&RenderableGlyph> for GlyphInfo {
     fn from(renderable: &RenderableGlyph) -> Self {
         Self {
             bounding_box: renderable.glyph.pixel_bounding_box(),
+            character_index: renderable.character_index,
         }
     }
 }
@@ -497,6 +500,8 @@ pub struct RenderableGlyph {
     pub font: usize,
     pub colour: Colour,
     pub glyph: PositionedGlyph<'static>,
+    /// This is the index of the character in the original text.
+    pub character_index: usize,
 }
 
 /// An indivisible unit of text, represented as a list of glyphs positioned relative to the word's origin point.
@@ -672,6 +677,8 @@ async fn typeset_rich_text_paragraph(
     // Contains the last glyph's font ID and glyph ID, if there was a previous glyph on this line.
     let mut last_glyph = None;
 
+    let mut character_index = 0;
+
     for segment in paragraph {
         let scale = match segment.style.size {
             FontSize::H1 => Scale::uniform(72.0 * scale_factor),
@@ -724,6 +731,7 @@ async fn typeset_rich_text_paragraph(
                     if font_and_glyph.is_none() {
                         // Really at this point there's no alternatives left.
                         // We'll just not render this character.
+                        character_index += 1;
                         continue;
                     }
                 }
@@ -767,7 +775,10 @@ async fn typeset_rich_text_paragraph(
                 font,
                 colour: segment.style.colour,
                 glyph,
+                character_index,
             });
+
+            character_index += 1;
         }
     }
 

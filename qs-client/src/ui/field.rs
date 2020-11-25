@@ -23,7 +23,8 @@ struct FieldElement {
     rich_text: RichText,
     /// The texture to draw the cursor with.
     caret_texture: NinePatch,
-
+    /// Is the mouse currently inside this element?
+    mouse_inside: bool,
     /// The position and size of the caret relative to this widget, if this widget has keyboard focus.
     caret_position: Option<Caret>,
 }
@@ -44,7 +45,12 @@ impl UiElement for FieldElement {
     }
 
     fn generate_render_info(&self, layout: &stretch::result::Layout) -> MultiRenderable {
-        if let Some(Caret { pos: (x, y), height, .. }) = self.caret_position {
+        if let Some(Caret {
+            pos: (x, y),
+            height,
+            ..
+        }) = self.caret_position
+        {
             self.caret_texture.generate_render_info(
                 Colour::WHITE,
                 layout.location.x + x - 2.0,
@@ -58,24 +64,46 @@ impl UiElement for FieldElement {
     }
 
     fn mouse_move(&mut self, pos: Point<f32>) {
-        tracing::trace!("Caret: {:#?}", self.get_caret_position(pos));
+        //tracing::trace!("Caret: {:#?}", self.get_caret_position(pos));
     }
 
-    fn process_mouse_input(&mut self, button: MouseButton, state: ElementState) -> MouseInputProcessResult {
-        if button == MouseButton::Left {
-            match state {
-                ElementState::Pressed => {
-                    MouseInputProcessResult::TakeKeyboardFocus
+    fn process_mouse_input(
+        &mut self,
+        button: MouseButton,
+        state: ElementState,
+    ) -> MouseInputProcessResult {
+        if self.mouse_inside {
+            if button == MouseButton::Left {
+                match state {
+                    ElementState::Pressed => MouseInputProcessResult::TakeKeyboardFocus,
+                    ElementState::Released => {
+                        // Don't let child widgets process this event.
+                        MouseInputProcessResult::Processed
+                    }
                 }
-                ElementState::Released => {
-                    // Don't let child widgets process this event.
-                    MouseInputProcessResult::Processed
-                }
+            } else {
+                // Maybe add right-click events later?
+                MouseInputProcessResult::NotProcessed
             }
         } else {
-            // Maybe add right-click events later?
             MouseInputProcessResult::NotProcessed
         }
+    }
+
+    fn mouse_enter(&mut self) {
+        self.mouse_inside = true;
+    }
+
+    fn mouse_leave(&mut self) {
+        self.mouse_inside = false;
+    }
+
+    fn gain_keyboard_focus(&mut self) {
+        tracing::trace!("Gain keyboard focus");
+    }
+
+    fn lose_keyboard_focus(&mut self) {
+        tracing::trace!("Lose keyboard focus");
     }
 }
 
@@ -115,7 +143,8 @@ impl FieldElement {
                                 && local_y < word_layout.size.height
                             {
                                 // We're hovering over this word.
-                                if let Some(word_info) = self.rich_text.get_word_info(word.get_id()) {
+                                if let Some(word_info) = self.rich_text.get_word_info(word.get_id())
+                                {
                                     // Now, let's work out where our cursor is supposed to go within this word.
                                     // The right edges of characters (along with the left edge of the initial character) are 'anchor points';
                                     // the closest anchor point to the mouse is where the caret will go.
@@ -126,19 +155,25 @@ impl FieldElement {
                                         if let Some(bounding_box) = glyph.bounding_box {
                                             // Evaluate the left edge if this is the first glyph with a bounding box (i.e. we haven't updated the closest point yet).
                                             if closest_anchor_point_distance == f32::MAX {
-                                                let distance = (bounding_box.min.x as f32 - local_x).abs();
+                                                let distance =
+                                                    (bounding_box.min.x as f32 - local_x).abs();
                                                 if distance < closest_anchor_point_distance {
-                                                    closest_anchor_point_index = glyph.character_index;
-                                                    closest_anchor_point_x_position = bounding_box.min.x as f32;
+                                                    closest_anchor_point_index =
+                                                        glyph.character_index;
+                                                    closest_anchor_point_x_position =
+                                                        bounding_box.min.x as f32;
                                                     closest_anchor_point_distance = distance;
                                                 }
                                             }
 
                                             // Evaluate the right edge.
-                                            let distance = (bounding_box.max.x as f32 - local_x).abs();
+                                            let distance =
+                                                (bounding_box.max.x as f32 - local_x).abs();
                                             if distance < closest_anchor_point_distance {
-                                                closest_anchor_point_index = glyph.character_index + 1;
-                                                closest_anchor_point_x_position = bounding_box.max.x as f32;
+                                                closest_anchor_point_index =
+                                                    glyph.character_index + 1;
+                                                closest_anchor_point_x_position =
+                                                    bounding_box.max.x as f32;
                                                 closest_anchor_point_distance = distance;
                                             }
                                         }
@@ -148,7 +183,11 @@ impl FieldElement {
                                     // and `closest_anchor_point_x_position` is the x-position that the caret should be rendered at.
                                     let caret = Caret {
                                         edit_index: closest_anchor_point_index,
-                                        pos: (closest_anchor_point_x_position + word_layout.location.x, word_layout.location.y),
+                                        pos: (
+                                            closest_anchor_point_x_position
+                                                + word_layout.location.x,
+                                            word_layout.location.y,
+                                        ),
                                         height: word_layout.size.height,
                                     };
                                     return Some(caret);
@@ -182,6 +221,7 @@ impl Field {
             rich_text: rich_text.clone(),
             caret_texture,
             caret_position: None,
+            mouse_inside: false,
         };
         let widget = Widget::new(
             field_element,

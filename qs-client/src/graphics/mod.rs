@@ -456,10 +456,10 @@ impl Application {
                 .set_text(Arc::clone(&self.test_font_family))
                 .write(&format!("{} frames", self.fps_counter.ticks))
                 .finish();
-            tracing::trace!(
+            /*tracing::trace!(
                 "{:.2} FPS",
                 1.0 / self.fps_counter.average_time().as_secs_f64()
-            );
+            );*/
         }
 
         {
@@ -617,7 +617,7 @@ impl Application {
                         }
                     }
                     if profiler.main_segment.ticks % 100 == 0 {
-                        tracing::trace!("{}", profiler);
+                        //tracing::trace!("{}", profiler);
                     }
                 }
 

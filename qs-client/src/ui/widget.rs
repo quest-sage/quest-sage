@@ -21,7 +21,12 @@ pub trait UiElement: Send + Sync {
     fn generate_render_info(&self, layout: &Layout) -> MultiRenderable;
 
     /// Processes a mouse input event.
-    fn process_mouse_input(&mut self, _button: MouseButton, _state: ElementState) -> MouseInputProcessResult {
+    /// This can be called even if the mouse is not currently over this widget; make sure that `mouse_enter` was actually called first!
+    fn process_mouse_input(
+        &mut self,
+        _button: MouseButton,
+        _state: ElementState,
+    ) -> MouseInputProcessResult {
         MouseInputProcessResult::NotProcessed
     }
 
@@ -436,15 +441,28 @@ impl Widget {
             }
             MouseInputProcessResult::Processed => true,
             MouseInputProcessResult::TakeKeyboardFocus => {
-                self.take_keyboard_focus(&mut write);
+                drop(write); // Unlock `self`. We might need to do some weird lock-unlock stuff in this function.
+                self.take_keyboard_focus();
                 true
             }
         }
     }
 
     /// Call this to invoke event-handling code for when a widget gains keyboard focus.
-    fn take_keyboard_focus(&self, widget_contents: &mut WidgetContents) {
+    fn take_keyboard_focus(&self) {
+        let read = self.0.read().unwrap();
+        if let Some(ui_status) = read.ui_reference.upgrade() {
+            let mut focused = ui_status.keyboard_focused_widget.write().unwrap();
+            drop(read); // Unlock `self`, just in case `old_widget == self`.
 
+            if let Some(old_widget) = focused.take() {
+                let mut old_widget = old_widget.0.write().unwrap();
+                old_widget.element.lose_keyboard_focus();
+            }
+
+            self.0.write().unwrap().element.gain_keyboard_focus();
+            *focused = Some(self.clone());
+        }
     }
 }
 
@@ -477,7 +495,9 @@ impl UI {
 
     pub fn update_size(&mut self, size: Size<Number>) {
         self.size = size;
-        self.ui_status.force_layout_signal.store(true, Ordering::Relaxed);
+        self.ui_status
+            .force_layout_signal
+            .store(true, Ordering::Relaxed);
     }
 
     /// Generates a `MultiRenderable` so that we can render this UI.
